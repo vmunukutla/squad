@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from util import masked_softmax
+from cnn import CNN
 
 
 class Embedding(nn.Module):
@@ -27,6 +28,23 @@ class Embedding(nn.Module):
         super(Embedding, self).__init__()
         self.drop_prob = drop_prob
         self.embed = nn.Embedding.from_pretrained(word_vectors)
+        self.char_list = list("""ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,;.!?:'\"/\\|_@#$%^&*~`+-=<>()[]""")
+        self.char2id = dict() # Converts characters to integers
+        self.char2id['<pad>'] = 0
+        self.char2id['{'] = 1
+        self.char2id['}'] = 2
+        self.char2id['<unk>'] = 3
+        for i, c in enumerate(self.char_list):
+            self.char2id[c] = len(self.char2id)
+        self.char_unk = self.char2id['<unk>']
+        self.start_of_word = self.char2id["{"]
+        self.end_of_word = self.char2id["}"]
+
+        pad_token_idx = self.char2id['<pad>']
+        self.char_embeddings = nn.Embedding(len(self.char2id), embedding_dim=50, padding_idx = pad_token_idx)
+        self.dropout = nn.Dropout(p=0.3)
+
+        self.cnn = CNN(word_vectors.size(1), 50)
         self.proj = nn.Linear(word_vectors.size(1), hidden_size, bias=False)
         self.hwy = HighwayEncoder(2, hidden_size)
 
