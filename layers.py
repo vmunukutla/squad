@@ -21,40 +21,52 @@ class Embedding(nn.Module):
 
     Args:
         word_vectors (torch.Tensor): Pre-trained word vectors.
+        char_vectors (torch.Tensor): Pre-trained character vectors.
         hidden_size (int): Size of hidden activations.
         drop_prob (float): Probability of zero-ing out activations
     """
-    def __init__(self, word_vectors, hidden_size, drop_prob):
+    def __init__(self, word_vectors, char_vectors, hidden_size, drop_prob):
         super(Embedding, self).__init__()
         self.drop_prob = drop_prob
-        self.embed = nn.Embedding.from_pretrained(word_vectors)
-        self.char_list = list("""ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,;.!?:'\"/\\|_@#$%^&*~`+-=<>()[]""")
-        self.char2id = dict() # Converts characters to integers
-        self.char2id['<pad>'] = 0
-        self.char2id['{'] = 1
-        self.char2id['}'] = 2
-        self.char2id['<unk>'] = 3
-        for i, c in enumerate(self.char_list):
-            self.char2id[c] = len(self.char2id)
-        self.char_unk = self.char2id['<unk>']
-        self.start_of_word = self.char2id["{"]
-        self.end_of_word = self.char2id["}"]
-
-        pad_token_idx = self.char2id['<pad>']
-        self.char_embeddings = nn.Embedding(len(self.char2id), embedding_dim=50, padding_idx = pad_token_idx)
-        self.dropout = nn.Dropout(p=0.3)
-
-        self.cnn = CNN(word_vectors.size(1), 50)
+        self.word_embed = nn.Embedding.from_pretrained(word_vectors)
+        self.char_embed = nn.Embedding.from_pretrained(char_vectors, freeze=False)
+        self.cnn = CNN(word_vectors.size(1), char_vectors.size(1))
+        self.highway = Highway(word_vectors.size(1))
         self.proj = nn.Linear(word_vectors.size(1), hidden_size, bias=False)
         self.hwy = HighwayEncoder(2, hidden_size)
 
-    def forward(self, x):
-        emb = self.embed(x)   # (batch_size, seq_len, embed_size)
-        emb = F.dropout(emb, self.drop_prob, self.training)
-        emb = self.proj(emb)  # (batch_size, seq_len, hidden_size)
-        emb = self.hwy(emb)   # (batch_size, seq_len, hidden_size)
+    def forward(self, x, y):
+        input_shape = y.shape
+        input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2]))
+        x_padded = self.char_embed(input_reshaped)
+        x_reshaped = x_padded.permute(0, 2, 1)
+        x_conv_out = self.cnn.forward(x_reshaped).squeeze(dim=2)
 
-        return emb
+        x_highway = self.highway(x_conv_out)
+        x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
+        x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
+
+        word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
+        word_emb = F.dropout(word_emb, self.drop_prob, self.training)
+        word_emb = torch.cat((word_emb, x_word_emb), dim=0)
+        word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
+        word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
+
+        return word_emb
+
+class Highway(nn.Module):
+
+    def __init__(self, embed_size):
+        super(Highway, self).__init__()
+
+        self.projection = nn.Linear(embed_size, embed_size)
+        self.gate = nn.Linear(embed_size, embed_size)
+
+    def forward(self, x):
+        x_proj = F.relu(self.projection(x))
+        x_gate = F.sigmoid(self.gate(x))
+        x_highway = torch.mul(x_proj, x_gate) + torch.mul(torch.add(1, torch.mul(x_gate, -1)), x)
+        return x_highway
 
 
 class HighwayEncoder(nn.Module):
