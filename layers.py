@@ -32,7 +32,7 @@ class Embedding(nn.Module):
         self.char_embed = nn.Embedding.from_pretrained(char_vectors, freeze=False)
         self.cnn = CNN(word_vectors.size(1), char_vectors.size(1))
         self.highway = Highway(word_vectors.size(1))
-        self.proj = nn.Linear(word_vectors.size(1), hidden_size, bias=False)
+        self.proj = nn.Linear(word_vectors.size(1) * 2, hidden_size, bias=False)
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
@@ -48,7 +48,8 @@ class Embedding(nn.Module):
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
-        word_emb = torch.cat((word_emb, x_word_emb), dim=1)
+        word_emb = torch.cat((word_emb, x_word_emb), dim=2)
+        print('in layers.py: ', word_emb.shape)
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
 
