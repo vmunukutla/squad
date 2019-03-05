@@ -40,7 +40,7 @@ class Embedding(nn.Module):
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2]))
         x_padded = self.char_embed(input_reshaped)
         x_reshaped = x_padded.permute(0, 2, 1)
-        x_conv_out = self.cnn.forward(x_reshaped).squeeze(dim=2)
+        x_conv_out = self.cnn.forward(x_reshaped)
 
         x_highway = self.highway(x_conv_out)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
@@ -48,7 +48,7 @@ class Embedding(nn.Module):
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
-        word_emb = torch.cat((word_emb, x_word_emb), dim=0)
+        word_emb = torch.cat((word_emb, x_word_emb), dim=2)
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
 
