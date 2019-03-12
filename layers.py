@@ -98,6 +98,14 @@ class HighwayEncoder(nn.Module):
         return x
 
 
+class EmbeddingEncoder(nn.Module):
+
+    def __init__(self, embed_size, kernel_size, num_filters, num_layers):
+        self.conv_layers = [nn.Conv1d(embed_size, num_filters, kernel_size) for i in range(num_layers))]
+        self.layer_norm = [nn.LayerNorm(normalized_shape) for i in range(num_layers)+2]
+        self.attention =
+
+
 class RNNEncoder(nn.Module):
     """General-purpose layer for encoding a sequence using a bidirectional RNN.
 
