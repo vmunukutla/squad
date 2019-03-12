@@ -145,6 +145,76 @@ class RNNEncoder(nn.Module):
         return x
 
 
+class DCN (nn.Module):
+    """
+    Here we will attempt to impliment a DCN model. Amanda and I are still a
+    little confused about what that means, but hopefully it works out.
+    """
+    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio):
+        super(CoattentionModel, self).__init__()
+        self.hidden_dim = hidden_dim
+
+        self.encoder = RNNEncoder(2*hidden_dim, hidden_dim, 1, dropout_ratio)
+
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
+        self.decoder = DynamicDecoder(hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
+        self.dropout = nn.Dropout(p=dropout_ratio)
+
+    def forward(self, q_seq, q_mask, d_seq, d_mask, span=None):
+        Q = self.encoder(q_seq, q_mask) # b x n + 1 x l
+        D = self.encoder(d_seq, d_mask)  # B x m + 1 x l
+
+        #project q
+        Q = F.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
+
+        #co attention
+        D_t = torch.transpose(D, 1, 2) #B x l x m + 1
+        L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
+
+        A_Q_ = F.softmax(L, dim=1) # B x n + 1 x m + 1
+        A_Q = torch.transpose(A_Q_, 1, 2) # B x m + 1 x n + 1
+        C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
+
+        Q_t = torch.transpose(Q, 1, 2)  # B x l x n + 1
+        A_D = F.softmax(L, dim=2)  # B x n + 1 x m + 1
+        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B x l x n+1 ; B x l x n+1) x (B x n +1x m+1) => B x 2l x m + 1
+
+        C_D_t = torch.transpose(C_D, 1, 2)  # B x m + 1 x 2l
+
+        #fusion BiLSTM
+        bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
+        bilstm_in = self.dropout(bilstm_in)
+        #?? should it be d_lens + 1 and get U[:-1]
+        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
+
+        loss, idx_s, idx_e = self.decoder(U, d_mask, span)
+        if span is not None:
+            return loss, idx_s, idx_e
+        else:
+            return idx_s, idx_e
+
+class FusionBiLSTM(nn.Module):
+    def __init__(self, hidden_dim, dropout_ratio):
+        super(FusionBiLSTM, self).__init__()
+        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
+                                     bidirectional=True, dropout=dropout_ratio)
+        init_lstm_forget_bias(self.fusion_bilstm)
+        self.dropout = nn.Dropout(p=dropout_ratio)
+
+    def forward(self, seq, mask):
+        lens = torch.sum(mask, 1)
+        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+        _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+        seq_ = torch.index_select(seq, 0, lens_argsort)
+        packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
+        output, _ = self.fusion_bilstm(packed)
+        e, _ = pad_packed_sequence(output, batch_first=True)
+        e = e.contiguous()
+        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+        e = self.dropout(e)
+        return e
+
 class BiDAFAttention(nn.Module):
     """Bidirectional attention originally used by BiDAF.
 
