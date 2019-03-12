@@ -1,427 +1,274 @@
+from __future__ import unicode_literals, print_function, division
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.cuda
-from help_functions import *
-from copy import copy
-import numpy as np
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+use_cuda = torch.cuda.is_available()
+
+class CoattentionModel(nn.Module):
+    def __init__(self,char_vectors, max_dec_steps=4, maxout_pool_size=16,\
+    dropout_ratio=0.15, hidden_dim=200):
+        super(CoattentionModel, self).__init__()
+
+        self.hidden_dim = hidden_dim
+        emb_matrix = nn.Embedding.from_pretrained(char_vectors, freeze=False)
+        self.encoder = Encoder(hidden_dim, emb_matrix, dropout_ratio)
+
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
+        self.decoder = DynamicDecoder(hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
+        self.dropout = nn.Dropout(p=dropout_ratio)
+
+    def forward(self, q_seq, q_mask, d_seq, d_mask, span=None):
+        Q = self.encoder(q_seq, q_mask) # b x n + 1 x l
+        D = self.encoder(d_seq, d_mask)  # B x m + 1 x l
+
+        #project q
+        Q = F.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
+
+        #co attention
+        D_t = torch.transpose(D, 1, 2) #B x l x m + 1
+        L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
+
+        A_Q_ = F.softmax(L, dim=1) # B x n + 1 x m + 1
+        A_Q = torch.transpose(A_Q_, 1, 2) # B x m + 1 x n + 1
+        C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
+
+        Q_t = torch.transpose(Q, 1, 2)  # B x l x n + 1
+        A_D = F.softmax(L, dim=2)  # B x n + 1 x m + 1
+        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B x l x n+1 ; B x l x n+1) x (B x n +1x m+1) => B x 2l x m + 1
+
+        C_D_t = torch.transpose(C_D, 1, 2)  # B x m + 1 x 2l
+
+        #fusion BiLSTM
+        bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
+        bilstm_in = self.dropout(bilstm_in)
+        #?? should it be d_lens + 1 and get U[:-1]
+        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
+
+        loss, idx_s, idx_e = self.decoder(U, d_mask, span)
+        if span is not None:
+            return loss, idx_s, idx_e
+        else:
+            return idx_s, idx_e
+def get_pretrained_embedding(np_embd):
+    embedding = nn.Embedding(*np_embd.shape)
+    embedding.weight = nn.Parameter(torch.from_numpy(np_embd).float())
+    embedding.weight.requires_grad = False
+    return embedding
+
+def init_lstm_forget_bias(lstm):
+    for names in lstm._all_weights:
+        for name in names:
+            if name.startswith('bias_'):
+                # set forget bias to 1
+                bias = getattr(lstm, name)
+                n = bias.size(0)
+                start, end = n // 4, n // 2
+                bias.data.fill_(0.)
+                bias.data[start:end].fill_(1.)
 
 class Encoder(nn.Module):
-
-    def __init__(self, hidden_dim, embedding_matrix, train_word_embeddings, dropout, number_of_layers):
-
-        '''
-                arguments passed:
-                            1) hidden_dim : the words and chars would be concatenated and would be projected to a space of size=hidden_dim
-                            2) embedding_matrix : number of pretrained words, size of embeddings.
-                            3) train_word_embeddings : train the word embeddings or not(Boolean).
-                            4) dropout : Fraction of neurons dropped
-        '''
-
+    def __init__(self, hidden_dim, emb_matrix, dropout_ratio):
         super(Encoder, self).__init__()
-
         self.hidden_dim = hidden_dim
-        self.word_embedding_dim = embedding_matrix.shape[1]
-        self.no_of_pretrained_words = embedding_matrix.shape[0]
-        self.train_word_embeddings = train_word_embeddings  # boolean
 
-        self.word_embeddings = nn.Embedding.from_pretrained(embedding_matrix)
+        self.embedding = get_pretrained_embedding(emb_matrix)
+        self.emb_dim = self.embedding.embedding_dim
 
-        self.dropout_fraction = dropout
-        self.dropout = nn.Dropout(dropout)
-        self.tanh = nn.Tanh()
+        self.encoder = nn.LSTM(self.emb_dim, hidden_dim, 1, batch_first=True,
+                              bidirectional=False, dropout=dropout_ratio)
+        init_lstm_forget_bias(self.encoder)
+        self.dropout_emb = nn.Dropout(p=dropout_ratio)
+        self.sentinel = nn.Parameter(torch.rand(hidden_dim,))
 
-        self.layers = number_of_layers
+    def forward(self, seq, mask):
+        lens = torch.sum(mask, 1)
+        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+        _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+        seq_ = torch.index_select(seq, 0, lens_argsort)
 
-        self.word_lstm = nn.LSTM(self.word_embedding_dim, hidden_dim, num_layers=number_of_layers, dropout=dropout, batch_first=True, bidirectional=True)
+        seq_embd = self.embedding(seq_)
+        packed = pack_padded_sequence(seq_embd, lens_sorted, batch_first=True)
+        output, _ = self.encoder(packed)
+        e, _ = pad_packed_sequence(output, batch_first=True)
+        e = e.contiguous()
+        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+        e = self.dropout_emb(e)
 
-        self.batch_norm = nn.BatchNorm1d(2 * hidden_dim)
+        b, _ = list(mask.size())
+        # copy sentinel vector at the end
+        sentinel_exp = self.sentinel.unsqueeze(0).expand(b, self.hidden_dim).unsqueeze(1).contiguous()  # B x 1 x l
+        lens = lens.unsqueeze(1).expand(b, self.hidden_dim).unsqueeze(1)
 
-        self.mlp = nn.Linear(2 * hidden_dim, 2 * hidden_dim)
+        sentinel_zero = torch.zeros(b, 1, self.hidden_dim)
+        if use_cuda:
+            sentinel_zero = sentinel_zero.cuda()
+        e = torch.cat([e, sentinel_zero], 1)  # B x m + 1 x l
+        e = e.scatter_(1, lens, sentinel_exp)
 
-        self.mlp1 = nn.Linear(2 * hidden_dim, 2 * hidden_dim)
+        return e
 
-    def init_hidden(self, dimension, batch_size):
-        return torch.zeros(2 * self.layers, batch_size, dimension).cuda(), torch.zeros(2 * self.layers, batch_size, dimension).cuda()
+class FusionBiLSTM(nn.Module):
+    def __init__(self, hidden_dim, dropout_ratio):
+        super(FusionBiLSTM, self).__init__()
+        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
+                                     bidirectional=True, dropout=dropout_ratio)
+        init_lstm_forget_bias(self.fusion_bilstm)
+        self.dropout = nn.Dropout(p=dropout_ratio)
 
-    def sort_sents(self, sentences, lengths):
+    def forward(self, seq, mask):
+        lens = torch.sum(mask, 1)
+        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+        _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+        seq_ = torch.index_select(seq, 0, lens_argsort)
+        packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
+        output, _ = self.fusion_bilstm(packed)
+        e, _ = pad_packed_sequence(output, batch_first=True)
+        e = e.contiguous()
+        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+        e = self.dropout(e)
+        return e
 
-        sorted_lengths, indexes = torch.sort(lengths, descending=True)
-        sorted_sentences = sentences[indexes]
+class DynamicDecoder(nn.Module):
+    def __init__(self, hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio):
+        super(DynamicDecoder, self).__init__()
+        self.max_dec_steps = max_dec_steps
+        self.decoder = nn.LSTM(4 * hidden_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        init_lstm_forget_bias(self.decoder)
 
-        return sorted_sentences, indexes, sorted_lengths
+        self.maxout_start = MaxOutHighway(hidden_dim, maxout_pool_size, dropout_ratio)
+        self.maxout_end = MaxOutHighway(hidden_dim, maxout_pool_size, dropout_ratio)
 
-    def forward(self, max_text_length, batch_sentences, batch_lengths, batch_size, apply_batch_norm, istraining, isquestion):
+    def forward(self, U, d_mask, span):
+        b, m, _ = list(U.size())
 
-        '''
-                    batch_sentences : [	[1,3,34,4,23.......],
-                                           [24,3,pad,pad,pad..],
-                                         [1,2,2,pad,pad.....],
-                                         [1,3,2,4,pad.......],]  -> torch tensor
-                    batch_lengths : [5,2,3,4]
-                    batch_size : number of examples received .
-        '''
+        curr_mask_s,  curr_mask_e = None, None
+        results_mask_s, results_s = [], []
+        results_mask_e, results_e = [], []
+        step_losses = []
 
-        word_idx_tensor, indexes, sequence_lengths = self.sort_sents(batch_sentences, batch_lengths)
+        mask_mult = (1.0 - d_mask.float()) * (-1e30)
+        indices = torch.arange(0, b, out=torch.LongTensor(b))
 
-        word_embed = (self.word_embeddings(word_idx_tensor)).view(batch_size, max_text_length,
-                                                                  self.word_embedding_dim)
+        # ??how to initialize s_i_1, e_i_1
+        s_i_1 = torch.zeros(b, ).long()
+        e_i_1 = torch.sum(d_mask, 1)
+        e_i_1 = e_i_1 - 1
 
-        if istraining:
-            word_embed = self.dropout(word_embed)
+        if use_cuda:
+            s_i_1 = s_i_1.cuda()
+            e_i_1 = e_i_1.cuda()
+            indices = indices.cuda()
 
-        packed_embedds = torch.nn.utils.rnn.pack_padded_sequence(word_embed, sequence_lengths, batch_first=True)
+        dec_state_i = None
+        s_target = None
+        e_target = None
+        if span is not None:
+            s_target = span[:, 0]
+            e_target = span[:, 1]
+        u_s_i_1 = U[indices, s_i_1, :]  # b x 2l
+        for _ in range(self.max_dec_steps):
+            u_e_i_1 = U[indices, e_i_1, :]  # b x 2l
+            u_cat = torch.cat((u_s_i_1, u_e_i_1), 1)  # b x 4l
 
-        hidden_layer = self.init_hidden(self.hidden_dim, batch_size)
+            lstm_out, dec_state_i = self.decoder(u_cat.unsqueeze(1), dec_state_i)
+            h_i, c_i = dec_state_i
 
-        text_representation, hidden_layer = self.word_lstm(packed_embedds, hidden_layer)
+            s_i_1, curr_mask_s, step_loss_s = self.maxout_start(h_i, U, curr_mask_s, s_i_1,
+                                                                u_cat, mask_mult, s_target)
+            u_s_i_1 = U[indices, s_i_1, :]  # b x 2l
+            u_cat = torch.cat((u_s_i_1, u_e_i_1), 1)  # b x 4l
 
-        h, lengths = torch.nn.utils.rnn.pad_packed_sequence(text_representation, batch_first=True)
+            e_i_1, curr_mask_e, step_loss_e = self.maxout_end(h_i, U, curr_mask_e, e_i_1,
+                                                              u_cat, mask_mult, e_target)
 
-        text_representation = torch.zeros_like(h).scatter_(0, indexes.unsqueeze(1).unsqueeze(1).expand(-1, h.shape[1], h.shape[2]), h)
+            if span is not None:
+                step_loss = step_loss_s + step_loss_e
+                step_losses.append(step_loss)
 
-        if istraining and apply_batch_norm:
-            text_representation = (self.batch_norm(text_representation.permute(0, 2, 1).contiguous())).permute(0, 2, 1)
+            results_mask_s.append(curr_mask_s)
+            results_s.append(s_i_1)
+            results_mask_e.append(curr_mask_e)
+            results_e.append(e_i_1)
 
-        text_representation = self.mlp(text_representation)
-        if istraining:
-            text_representation = self.dropout(text_representation)
+        result_pos_s = torch.sum(torch.stack(results_mask_s, 1), 1).long()
+        result_pos_s = result_pos_s - 1
+        idx_s = torch.gather(torch.stack(results_s, 1), 1, result_pos_s.unsqueeze(1)).squeeze()
 
-        if isquestion:
-            text_representation = self.tanh(self.mlp1(text_representation))
-            zero_one = get_ones_and_zeros_mat(batch_size, sequence_lengths, self.hidden_dim)
-            text_representation = text_representation * zero_one
+        result_pos_e = torch.sum(torch.stack(results_mask_e, 1), 1).long()
+        result_pos_e = result_pos_e - 1
+        idx_e = torch.gather(torch.stack(results_e, 1), 1, result_pos_e.unsqueeze(1)).squeeze()
 
-        return text_representation
+        loss = None
+
+        if span is not None:
+            sum_losses = torch.sum(torch.stack(step_losses, 1), 1)
+            batch_avg_loss = sum_losses / self.max_dec_steps
+            loss = torch.mean(batch_avg_loss)
+
+        return loss, idx_s, idx_e
 
 
-class Coattention_Encoder(nn.Module):
-
-    def __init__(self, hidden_dim, dropout, number_of_layers):
-
-        '''
-            arguments passed:
-                 1) hidden_dim : the words and chars would be concatenated and
-                 would be projected to a space of size=hidden_dim
-        '''
-
-        super(Coattention_Encoder, self).__init__()
+class MaxOutHighway(nn.Module):
+    def __init__(self, hidden_dim, maxout_pool_size, dropout_ratio):
+        super(MaxOutHighway, self).__init__()
         self.hidden_dim = hidden_dim
-        self.dropout = nn.Dropout(dropout)
+        self.maxout_pool_size = maxout_pool_size
 
-        self.layers = number_of_layers
+        self.r = nn.Linear(5 * hidden_dim, hidden_dim, bias=False)
+        #self.dropout_r = nn.Dropout(p=dropout_ratio)
 
-        self.lstm_layer1 = nn.LSTM(2 * hidden_dim, hidden_dim, num_layers=number_of_layers, dropout=dropout, bidirectional=True, batch_first=True)
-        self.lstm_layer2 = nn.LSTM(12 * hidden_dim, hidden_dim, num_layers=number_of_layers, dropout=dropout, bidirectional=True, batch_first=True)
+        self.m_t_1_mxp = nn.Linear(3 * hidden_dim, hidden_dim*maxout_pool_size)
+        #self.dropout_m_t_1 = nn.Dropout(p=dropout_ratio)
 
-        self.mlp1 = nn.Linear(2 * hidden_dim, 2 * hidden_dim)
-        self.mlp2 = nn.Linear(2 * hidden_dim, 2 * hidden_dim)
+        self.m_t_2_mxp = nn.Linear(hidden_dim, hidden_dim*maxout_pool_size)
+        #self.dropout_m_t_2 = nn.Dropout(p=dropout_ratio)
 
-        self.batch_norm = nn.BatchNorm1d(2 * hidden_dim)
+        self.m_t_12_mxp = nn.Linear(2 * hidden_dim, maxout_pool_size)
 
-    def init_hidden(self, dimension, batch_size):
-        return torch.zeros(2 * self.layers, batch_size, dimension).cuda(), torch.zeros(2 * self.layers, batch_size, dimension).cuda()
+        self.loss = nn.CrossEntropyLoss()
 
-    def sort_sents(self, S, lengths):
+    def forward(self, h_i, U, curr_mask, idx_i_1, u_cat, mask_mult, target=None):
+        b, m, _ = list(U.size())
 
-        sorted_lengths, indexes = torch.sort(lengths, descending=True)
-        sorted_sentences = S[indexes]
+        r = F.tanh(self.r(torch.cat((h_i.view(-1, self.hidden_dim), u_cat), 1)))  # b x 5l => b x l
+        #r = self.dropout_r(r)
 
-        return sorted_sentences, sorted_lengths, indexes
+        r_expanded = r.unsqueeze(1).expand(b, m, self.hidden_dim).contiguous()  # b x m x l
 
-    def forward(self, question, question_lens, passage, passage_lens, batch_size, apply_batch_norm, istraining):
+        m_t_1_in = torch.cat((U, r_expanded), 2).view(-1, 3*self.hidden_dim)  # b*m x 3l
 
-        question = question.permute(0, 2, 1)
-        L = torch.bmm(passage, question)
+        m_t_1 = self.m_t_1_mxp(m_t_1_in)  # b*m x p*l
+        #m_t_1 = self.dropout_m_t_1(m_t_1)
+        m_t_1, _ = m_t_1.view(-1, self.hidden_dim, self.maxout_pool_size).max(2) # b*m x l
 
-        AQ = copy(L)
-        AD = copy(L.permute(0, 2, 1))
+        m_t_2 = self.m_t_2_mxp(m_t_1)  # b*m x l*p
+        #m_t_2 = self.dropout_m_t_2(m_t_2)
+        m_t_2, _ = m_t_2.view(-1, self.hidden_dim, self.maxout_pool_size).max(2)  # b*m x l
 
-        subtract_from_AQ_AD = get_one_zero_mat(batch_size, passage_lens, question_lens)
-        multiply_to_AD = get_ones_zeros_mat(batch_size, passage_lens, max(question_lens))
-        multiply_to_AQ = get_ones_zeros_mat(batch_size, question_lens, max(passage_lens))
+        alpha_in = torch.cat((m_t_1, m_t_2), 1)  # b*m x 2l
+        alpha = self.m_t_12_mxp(alpha_in)  # b * m x p
+        alpha, _ = alpha.max(1)  # b*m
+        alpha = alpha.view(-1, m) # b x m
 
-        AQ = AQ - subtract_from_AQ_AD
-        AQ = F.softmax(AQ, dim=1)
-        AQ = AQ * multiply_to_AQ
+        alpha = alpha + mask_mult  # b x m
+        alpha = F.log_softmax(alpha, 1)  # b x m
+        _, idx_i = torch.max(alpha, dim=1)
 
-        AD = AD - (subtract_from_AQ_AD.permute(0, 2, 1))
-        AD = F.softmax(AD, dim=1)
-        AD = AD * multiply_to_AD
+        if curr_mask is None:
+            curr_mask = (idx_i == idx_i)
+        else:
+            idx_i = idx_i*curr_mask.long()
+            idx_i_1 = idx_i_1*curr_mask.long()
+            curr_mask = (idx_i != idx_i_1)
 
-        S1D = torch.bmm(question, AD)
-        S1Q = torch.bmm(passage.permute(0, 2, 1), AQ)
+        step_loss = None
 
-        C1D = torch.bmm(S1Q, AD)
+        if target is not None:
+            step_loss = self.loss(alpha, target)
+            step_loss = step_loss * curr_mask.float()
 
-        S1D = S1D.permute(0, 2, 1)
-        S1Q = S1Q.permute(0, 2, 1)
-
-        S1D1, S1D_len, S1D_index = self.sort_sents(S1D, passage_lens)
-        S1Q1, S1Q_len, S1Q_index = self.sort_sents(S1Q, question_lens)
-
-        # ------#
-
-        pack_S1D = torch.nn.utils.rnn.pack_padded_sequence(S1D1, S1D_len, batch_first=True)
-        hidden_layer = self.init_hidden(self.hidden_dim, batch_size)
-
-        S1D1, hidden_layer = self.lstm_layer1(pack_S1D, hidden_layer)
-        S1D1, unpacked_len = torch.nn.utils.rnn.pad_packed_sequence(S1D1, batch_first=True)
-
-        # ------#
-
-        pack_S1Q = torch.nn.utils.rnn.pack_padded_sequence(S1Q1, S1Q_len, batch_first=True)
-        hidden_layer = self.init_hidden(self.hidden_dim, batch_size)
-
-        S1Q1, hidden_layer = self.lstm_layer1(pack_S1Q, hidden_layer)
-        S1Q1, unpacked_len = torch.nn.utils.rnn.pad_packed_sequence(S1Q1, batch_first=True)
-
-        # ------#
-
-        E2D = torch.zeros_like(S1D1).scatter_(0, S1D_index.unsqueeze(1).unsqueeze(1).expand(-1, S1D1.shape[1], S1D1.shape[2]), S1D1)
-        E2Q = torch.zeros_like(S1Q1).scatter_(0, S1Q_index.unsqueeze(1).unsqueeze(1).expand(-1, S1Q1.shape[1], S1Q1.shape[2]), S1Q1)
-
-        if istraining and apply_batch_norm:
-            E2D = self.batch_norm(E2D.permute(0, 2, 1).contiguous()).permute(0, 2, 1)
-            E2Q = self.batch_norm(E2Q.permute(0, 2, 1).contiguous()).permute(0, 2, 1)
-
-        E2D = self.mlp1(E2D)
-        E2Q = self.mlp1(E2Q)
-
-        # ------------------------------------------------------------#
-
-        if istraining:
-            E2D = self.dropout(E2D)
-            E2Q = self.dropout(E2Q)
-
-        E2Q = E2Q.permute(0, 2, 1)
-        L = torch.bmm(E2D, E2Q)
-
-        AQ = copy(L)
-        AD = copy(L.permute(0, 2, 1))
-
-        subtract_from_AQ_AD = get_one_zero_mat(batch_size, passage_lens, question_lens)
-        multiply_to_AD = get_ones_zeros_mat(batch_size, passage_lens, max(question_lens))
-        multiply_to_AQ = get_ones_zeros_mat(batch_size, question_lens, max(passage_lens))
-
-        AQ = AQ - subtract_from_AQ_AD
-        AQ = F.softmax(AQ, dim=1)
-        AQ = AQ * multiply_to_AQ
-
-        AD = AD - (subtract_from_AQ_AD.permute(0, 2, 1))
-        AD = F.softmax(AD, dim=1)
-        AD = AD * multiply_to_AD
-
-        S2D = torch.bmm(E2Q, AD)
-        S2Q = torch.bmm(E2D.permute(0, 2, 1), AQ)
-
-        C2D = torch.bmm(S2Q, AD)
-        S2D = S2D.permute(0, 2, 1)
-
-        C1D = C1D.permute(0, 2, 1)
-        C2D = C2D.permute(0, 2, 1)
-
-        # ---------------------------------------------------------#
-
-        '''
-            S1D -> batch*passage_lens*2hidden
-            S2D -> batch*passage_lens*2hidden
-            E1D(passage) ->  batch_size*passage_length*(2hidden)
-            E2D -> batch*passage_lens*2hidden
-            C1D -> batch*passage_lens*2hidden
-            C2D -> batch*passage_lens*2hidden
-        '''
-
-        U = torch.cat((passage, E2D, S1D, S2D, C1D, C2D), dim=2)
-
-        U, U_length, U_index = self.sort_sents(U, passage_lens)
-
-        # ----#
-        pack_U = torch.nn.utils.rnn.pack_padded_sequence(U, U_length, batch_first=True)
-        hidden_layer = self.init_hidden(self.hidden_dim, batch_size)
-
-        pack_U, hidden_layer = self.lstm_layer2(pack_U, hidden_layer)
-        pack_U, unpacked_len = torch.nn.utils.rnn.pad_packed_sequence(pack_U, batch_first=True)
-
-        # ----#
-
-        U = torch.zeros_like(pack_U).scatter_(0, U_index.unsqueeze(1).unsqueeze(1).expand(-1, pack_U.shape[1], pack_U.shape[2]), pack_U)
-
-        if istraining and apply_batch_norm:
-            U = self.batch_norm(U.permute(0, 2, 1).contiguous()).permute(0, 2, 1)
-
-        U = self.mlp2(U)
-
-        if istraining:
-            U = self.dropout(U)
-
-        return U.permute(0, 2, 1)
-
-
-class Maxout(nn.Module):
-
-    def __init__(self, dim_in, dim_out, pooling_size):
-        super().__init__()
-
-        self.d_in, self.d_out, self.pool_size = dim_in, dim_out, pooling_size
-        self.lin = nn.Linear(dim_in, dim_out * pooling_size)
-
-    def forward(self, inputs):
-        shape = list(inputs.size())
-        shape[-1] = self.d_out
-        shape.append(self.pool_size)
-        max_dim = len(shape) - 1
-        out = self.lin(inputs)
-        m, i = out.view(*shape).max(max_dim)
-        return m
-
-
-class Decoder(nn.Module):
-
-    def __init__(self, hidden_dim, pooling_size, number_of_iters, dropout):
-
-        super(Decoder, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.lstm_layer = nn.LSTMCell(4 * hidden_dim, hidden_dim)
-        self.pooling_size = pooling_size
-        self.number_of_iters = number_of_iters
-
-        self.tanh = nn.Tanh()
-        self.mlp = nn.Linear(hidden_dim, hidden_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.batch_norm = nn.BatchNorm1d(hidden_dim)
-
-        self.WD_start = nn.Linear(5 * hidden_dim, hidden_dim, bias=False)
-
-        self.maxout1_start = Maxout(3 * hidden_dim, hidden_dim, pooling_size)
-        self.maxout2_start = Maxout(hidden_dim, hidden_dim, pooling_size)
-        self.maxout3_start = Maxout(2 * hidden_dim, 1, pooling_size)
-
-        self.WD_end = nn.Linear(5 * hidden_dim, hidden_dim, bias=False)
-
-        self.maxout1_end = Maxout(3 * hidden_dim, hidden_dim, pooling_size)
-        self.maxout2_end = Maxout(hidden_dim, hidden_dim, pooling_size)
-        self.maxout3_end = Maxout(2 * hidden_dim, 1, pooling_size)
-
-    def init_hidden(self, dimension, batch_size):
-        return torch.zeros(batch_size, dimension).cuda(), torch.zeros(batch_size, dimension).cuda()
-
-    def forward(self, encoding_matrix, batch_size, passage_lens, apply_batch_norm, istraining):
-
-        '''
-                    1) encoding_matrix: batch_size*(2*hidden_dim)*max_passage
-                    2) batch_size: batch_size
-                    3) passage_lens : list having all the proper lengths of the passages(unpaded)
-        '''
-
-        start, end = torch.tensor([0] * batch_size).cuda(), torch.tensor([0] * batch_size).cuda()
-        hx, cx = self.init_hidden(self.hidden_dim, batch_size)
-
-        zero_one = get_zero_one_mat(batch_size, passage_lens)
-
-        s1 = start.view(-1, 1, 1).expand(encoding_matrix.size(0), encoding_matrix.size(1), 1)
-        e1 = end.view(-1, 1, 1).expand(encoding_matrix.size(0), encoding_matrix.size(1), 1)
-
-        encoding_start_state = encoding_matrix.gather(2, s1).view(batch_size, -1)
-        encoding_end_state = encoding_matrix.gather(2, e1).view(batch_size, -1)
-
-        entropies = []
-
-        for i in range(self.number_of_iters):
-            alphas, betas = torch.tensor([], requires_grad=True).cuda(), torch.tensor([], requires_grad=True).cuda()
-
-            h_s_e = torch.cat((hx, encoding_start_state, encoding_end_state), dim=1)
-            r = self.tanh(self.WD_start(h_s_e))
-
-            for j in range(encoding_matrix.shape[2]):
-                jth_states = encoding_matrix[:, :, j]
-
-                e_r = torch.cat((jth_states, r), dim=1)
-
-                m1 = self.maxout1_start.forward(e_r)
-
-                m2 = self.maxout2_start.forward(m1)
-
-                hmn = self.maxout3_start.forward(torch.cat((m1, m2), dim=1))
-
-                alphas = torch.cat((alphas, hmn), dim=1)
-
-            alphas = alphas - zero_one
-            start = torch.argmax(alphas, dim=1)
-
-            s1 = start.view(-1, 1, 1).expand(encoding_matrix.size(0), encoding_matrix.size(1), 1)
-            encoding_start_state = encoding_matrix.gather(2, s1).view(batch_size, -1)
-
-            h_s_e = torch.cat((hx, encoding_start_state, encoding_end_state), dim=1)
-
-            r = self.tanh(self.WD_end(h_s_e))
-            for j in range(encoding_matrix.shape[2]):
-                jth_states = encoding_matrix[:, :, j]
-
-                e_r = torch.cat((jth_states, r), dim=1)
-
-                m1 = self.maxout1_end.forward(e_r)
-
-                m2 = self.maxout2_end.forward(m1)
-
-                hmn = self.maxout3_end.forward(torch.cat((m1, m2), dim=1))
-
-                betas = torch.cat((betas, hmn), dim=1)
-
-            betas = betas - zero_one
-            end = torch.argmax(betas, dim=1)
-
-            e1 = end.view(-1, 1, 1).expand(encoding_matrix.size(0), encoding_matrix.size(1), 1)
-            encoding_end_state = encoding_matrix.gather(2, e1).view(batch_size, -1)
-
-            hx, cx = self.lstm_layer(torch.cat((encoding_start_state, encoding_end_state), dim=1), (hx, cx))
-
-            if istraining and apply_batch_norm:
-                hx = self.batch_norm(hx)
-
-            hx = self.mlp(hx)
-
-            if istraining:
-                hx = self.dropout(hx)
-
-            entropies.append([alphas, betas])
-
-        return start, end, entropies
-
-
-class Model(nn.Module):
-
-    def __init__(self, hidden_dim, embedding_matrix, train_word_embeddings, dropout, pooling_size, number_of_iters, number_of_layers):
-        super(Model, self).__init__()
-
-        self.Encoder = Encoder(hidden_dim, embedding_matrix, train_word_embeddings, dropout, number_of_layers)
-        self.Coattention_Encoder = Coattention_Encoder(hidden_dim, dropout, number_of_layers)
-        self.Decoder = Decoder(hidden_dim, pooling_size, number_of_iters, dropout)
-
-    def forward(self, max_p_length, max_q_length, batch_passages, batch_questions, batch_p_lengths, batch_q_lengths, number_of_examples, apply_batch_norm, istraining):
-        passage_representation = self.Encoder.forward(max_p_length, batch_passages, batch_p_lengths, number_of_examples, apply_batch_norm, istraining, isquestion=False)
-
-        question_representation = self.Encoder.forward(max_q_length, batch_questions, batch_q_lengths, number_of_examples, apply_batch_norm, istraining, isquestion=True)
-
-        '''
-            In passage_length_index and question_length_index-> corresponding elements denote same passage question pair
-        '''
-
-        u_matrix = self.Coattention_Encoder.forward(question_representation,
-                                                    batch_q_lengths.clone(),
-                                                    passage_representation,
-                                                    batch_p_lengths.clone(),
-                                                    number_of_examples,
-                                                    apply_batch_norm,
-                                                    istraining)
-
-        # size is batch*(2*hidden)*passage_lens
-
-        start_outputs, end_outputs, entropies = self.Decoder.forward(u_matrix,
-                                                                     number_of_examples,
-                                                                     batch_p_lengths.clone(),
-                                                                     apply_batch_norm,
-                                                                     istraining)
-
-        return start_outputs, end_outputs, entropies
+        return idx_i, curr_mask, step_loss

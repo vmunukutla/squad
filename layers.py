@@ -103,7 +103,6 @@ class EmbeddingEncoder(nn.Module):
     def __init__(self, embed_size, kernel_size, num_filters, num_layers):
         self.conv_layers = [nn.Conv1d(embed_size, num_filters, kernel_size) for i in range(num_layers))]
         self.layer_norm = [nn.LayerNorm(normalized_shape) for i in range(num_layers)+2]
-        self.attention =
 
 
 class RNNEncoder(nn.Module):
@@ -154,11 +153,22 @@ class RNNEncoder(nn.Module):
 
 
 class DCN (nn.Module):
+    def __init__(self, hidden_size, drop_prob=0.1):
+        super(BiDAFAttention, self).__init__()
+        self.drop_prob = drop_prob
+        self.c_weight = nn.Parameter(torch.zeros(hidden_size, 1))
+        self.q_weight = nn.Parameter(torch.zeros(hidden_size, 1))
+        self.cq_weight = nn.Parameter(torch.zeros(1, 1, hidden_size))
+        for weight in (self.c_weight, self.q_weight, self.cq_weight):
+            nn.init.xavier_uniform_(weight)
+        self.bias = nn.Parameter(torch.zeros(1))
+
+
     """
     Here we will attempt to impliment a DCN model. Amanda and I are still a
     little confused about what that means, but hopefully it works out.
     """
-    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio):
+    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio=0.1):
         super(CoattentionModel, self).__init__()
         self.hidden_dim = hidden_dim
 
