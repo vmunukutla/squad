@@ -100,10 +100,70 @@ class HighwayEncoder(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, embed_size, kernel_size, num_filters, num_layers):
+    def __init__(self, embed_size, kernel_size=7, num_filters=128, num_layers=4):
+        super(EmbeddingEncoder, self).__init__()
         self.conv_layers = [nn.Conv1d(embed_size, num_filters, kernel_size) for i in range(num_layers))]
         self.layer_norm = [nn.LayerNorm(normalized_shape) for i in range(num_layers)+2]
-        self.attention =
+        self.attention = MultiHeadAttention()
+
+# borrowed from https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Modules.py
+class ScaledDotProductAttention(nn.Module):
+    ''' Scaled Dot-Product Attention '''
+
+    def __init__(self, temperature, attn_dropout=0.1):
+        super().__init__()
+        self.temperature = temperature
+        self.dropout = nn.Dropout(attn_dropout)
+        self.softmax = nn.Softmax(dim=2)
+
+    def forward(self, q, k, v, mask=None):
+
+        attn = torch.bmm(q, k.transpose(1, 2))
+        attn = attn / self.temperature
+
+        if mask is not None:
+            attn = attn.masked_fill(mask, -np.inf)
+
+        attn = self.softmax(attn)
+        attn = self.dropout(attn)
+        output = torch.bmm(attn, v)
+
+        return output, attn
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads=8, d_model=128, drop_prob=0.1):
+        super(MultiHeadAttention, self).__init__()
+        self.drop_prob = drop_prob
+        self.num_heads = num_heads
+        self.d_model = d_model
+        self.d_k = d_model/num_heads
+        self.d_v = d_model/num_heads
+        W_Q = [nn.Parameter(torch.zeros(d_model, d_k)) for i in range(num_heads)]
+        W_K = [nn.Parameter(torch.zeros(d_model, d_k)) for i in range(num_heads)]
+        W_V = [nn.Parameter(torch.zeros(d_model, d_v)) for i in range(num_heads)]
+        self.W_O = nn.Parameter(torch.zeros(num_heads * d_v, d_model))
+        nn.init.xavier_uniform_(self.W_O)
+        for i in range(num_heads):
+            for weight in (W_Q[i], W_K[i], W_V[i]):
+                nn.init.xavier_uniform_(weight)
+        self.W_Q = nn.ParameterList(W_Q)
+        self.W_K = nn.ParameterList(W_K)
+        self.W_V = nn.ParameterList(W_V)
+        self.attention_layer = ScaledDotProductAttention(temperature = 1/math.sqrt(d_k))
+
+    def forward(self, input, input_mask):
+        Q, K, V = [], [], []
+        heads = []
+        for i in range(self.num_heads):
+            Q.append(torch.matmul(input, self.W_Q))
+            K.append(torch.matmul(input, self.W_K))
+            V.append(torch.matmul(input, self.W_V))
+        for i in range(num_heads):
+            heads.append(self.attention_layer(Q[i], K[i], V[i]))
+        concatenated = torch.concat(heads, dim=2)
+        output = torch.matmul(concatenated, self.W_O)
+        return output.transpose(1, 2)
+
 
 
 class RNNEncoder(nn.Module):
