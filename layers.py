@@ -49,8 +49,8 @@ class Embedding(nn.Module):
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
-        word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
-        word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
+        word_emb = self.proj(word_emb)  # (batch_size, seq_len, 2 * hidden_size)
+        word_emb = self.hwy(word_emb)   # (batch_size, seq_len, 2 * hidden_size)
 
         return word_emb
 
@@ -100,12 +100,59 @@ class HighwayEncoder(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, embed_size, kernel_size=7, num_filters=128, num_layers=4):
+    def __init__(self, seq_len, hidden_size, kernel_size=7, num_filters=128, num_layers=4):
         super(EmbeddingEncoder, self).__init__()
+        self.num_layers = num_layers
         self.conv_layers = [nn.Conv1d(embed_size, num_filters, kernel_size) for i in range(num_layers))]
-        self.layer_norm = [nn.LayerNorm(normalized_shape) for i in range(num_layers)+2]
-<<<<<<< HEAD
-        self.attention = MultiHeadAttention()
+        self.attention = MultiHeadAttention(d_model=num_filters)
+        normalized_shapes = [[seq_len, 2 * hidden_size], num_layers * [seq_len, num_filters], []]
+        self.layer_norm = [nn.LayerNorm(normalized_shapes[i]) for i in range(num_layers)+2]
+        self.layer_norm_after = [nn.LayerNorm(normalized_shapes[i])]
+        self.feed_forward = FeedForwardNeuralNetModel(num_filters, num_filters/2, num_filters)
+
+    def forward(self, input, input_mask):
+        prev_out = input
+        for i in range(self.num_layers):
+            layer_out = self.layer_norm[i](input)
+            conv_out = self.conv_layers[i](layer_out)
+            concat_out = torch.cat(prev_out, conv_out)
+            prev_out = concat_out
+        layer_out = self.layer_norm[self.num_layers](prev_out)
+        attention_out = self.attention(layer_out)
+        concat_out = torch.cat(prev_output, attention_out)
+        prev_out = concat_out
+        layer_out = self.layer_norm[self.num_layers+1](prev_out)
+        feed_out = self.feed_forward(layer_out)
+        concat_out = torch.concat(concat_out, feed_out)
+        return concat_out
+
+
+
+#https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
+class FeedForwardNeuralNetModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(FeedForwardNeuralNetModel, self).__init__()
+        # Linear function
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+
+        # Non-linearity
+        self.sigmoid = nn.Sigmoid()
+
+        # Linear function (readout)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        # Linear function  # LINEAR
+        out = self.fc1(x)
+
+        # comment and uncomment to try out
+        # Non-linearity  # NON-LINEAR
+        out = self.sigmoid(out)
+
+        # Linear function (readout)  # LINEAR
+        out = self.fc2(out)
+        return out
+
 
 # borrowed from https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Modules.py
 class ScaledDotProductAttention(nn.Module):
@@ -165,8 +212,6 @@ class MultiHeadAttention(nn.Module):
         output = torch.matmul(concatenated, self.W_O)
         return output.transpose(1, 2)
 
-=======
->>>>>>> e95826f9e21879bac2341e29d87c6c3f9c178e88
 
 
 class RNNEncoder(nn.Module):
