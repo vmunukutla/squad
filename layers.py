@@ -288,11 +288,11 @@ class MultiHeadAttention(nn.Module):
         Q, K, V = [], [], []
         heads = []
         for i in range(self.num_heads):
-            # Q = (torch.matmul(input, self.W_Q[i]))
-            # K = (torch.matmul(input, self.W_K[i]))
-            # V = (torch.matmul(input, self.W_V[i]))
-            # heads.append(self.attention_layer(Q, K, V, input_mask)[0])
-            heads.append(torch.Tensor(input.size(0), input.size(1), input.size(2)).cuda())
+            Q = (torch.matmul(input, self.W_Q[i]))
+            K = (torch.matmul(input, self.W_K[i]))
+            V = (torch.matmul(input, self.W_V[i]))
+            heads.append(self.attention_layer(Q, K, V, input_mask)[0])
+            # heads.append(torch.Tensor(input.size(0), input.size(1), input.size(2)).cuda())
         # for i in range(self.num_heads):
         #     heads.append(self.attention_layer(Q[i], K[i], V[i], input_mask)[0])
         concatenated = torch.cat(heads, dim=2)
