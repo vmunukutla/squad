@@ -197,7 +197,7 @@ class EmbeddingEncoder(nn.Module):
         # print('start')
         prev_out = input
         # print(prev_out.shape)
-        prev_out = self.pos_encoder(prev_out).cuda()
+        prev_out = self.pos_encoder(prev_out)
         # print(prev_out.shape)
         # print(prev_out.dtype)
         for i in range(self.num_layers):
@@ -259,6 +259,8 @@ class ScaledDotProductAttention(nn.Module):
         attn = self.dropout(attn)
         output = torch.bmm(attn, v)
 
+        print(output.shape)
+
         return output, attn
 
 class MultiHeadAttention(nn.Module):
@@ -285,12 +287,13 @@ class MultiHeadAttention(nn.Module):
     def forward(self, input, input_mask):
         Q, K, V = [], [], []
         heads = []
-        for i in range(self.num_heads):
-            Q.append(torch.matmul(input, self.W_Q[i]))
-            K.append(torch.matmul(input, self.W_K[i]))
-            V.append(torch.matmul(input, self.W_V[i]))
-        for i in range(self.num_heads):
-            heads.append(self.attention_layer(Q[i], K[i], V[i], input_mask)[0])
+        # for i in range(self.num_heads):
+        #     Q = (torch.matmul(input, self.W_Q[i]))
+        #     K = (torch.matmul(input, self.W_K[i]))
+        #     V = (torch.matmul(input, self.W_V[i]))
+        #     heads.append(self.attention_layer(Q, K, V, input_mask)[0])
+        # for i in range(self.num_heads):
+        #     heads.append(self.attention_layer(Q[i], K[i], V[i], input_mask)[0])
         concatenated = torch.cat(heads, dim=2)
         output = torch.matmul(concatenated, self.W_O)
         return output
