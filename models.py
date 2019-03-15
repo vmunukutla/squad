@@ -74,8 +74,8 @@ class BiDAF(nn.Module):
         c_emb = self.emb(cw_idxs, cc_idxs).to(self.device)       # (batch_size, c_len, hidden_size)
         q_emb = self.emb(qw_idxs, qc_idxs).to(self.device)         # (batch_size, q_len, hidden_size)
 
-        # c_emb = self.emb_encoder(c_emb, c_mask).to(self.device)
-        # q_emb = self.emb_encoder(q_emb, q_mask).to(self.device)
+        c_emb = self.emb_encoder(c_emb, c_mask).to(self.device)
+        q_emb = self.emb_encoder(q_emb, q_mask).to(self.device)
         # print('c_emb_out: ', c_emb.shape)
         # print('q_emb_out: ', q_emb.shape)
 
