@@ -189,6 +189,7 @@ class EmbeddingEncoder(nn.Module):
         self.conv_layers = nn.ParameterList([PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)])
         self.attention = MultiHeadAttention(d_model=d_model)
         self.layer_norm = nn.ParamaterList([nn.LayerNorm(d_model) for i in range(num_layers+2)])
+        self.test_norm = nn.LayerNorm(self.d_model)
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
         self.pos_encoder = PositionalEncoder(d_model=d_model, device=device)
         self.drop_prob = drop_prob
@@ -202,8 +203,7 @@ class EmbeddingEncoder(nn.Module):
         print(prev_out.dtype)
         for i in range(self.num_layers):
             #print(prev_out.shape)
-            layer_norm = nn.LayerNorm(self.d_model)
-            layer_out = layer_norm(prev_out)
+            layer_out = self.test_norm(prev_out)
             layer_out = layer_out.permute(0, 2, 1)
             # print('layer shape')
             # print(layer_out.shape)
