@@ -61,6 +61,7 @@ class BiDAF(nn.Module):
         #                               drop_prob=drop_prob)
         #
 
+        self.conv_layer = nn.Conv1d(self.hidden_size * 4, self.hidden_size, 7, padding=math.floor(7/2))
         self.out = layers.QANet(hidden_size=hidden_size)
 
     def forward(self, cw_idxs, qw_idxs, cc_idxs, qc_idxs):
@@ -86,8 +87,6 @@ class BiDAF(nn.Module):
                        c_mask, q_mask)    # (batch_size, c_len, 4 * hidden_size)
 
         att = att.permute(0, 2, 1).to(self.device)
-
-        conv = nn.Conv1d(self.hidden_size * 4, self.hidden_size, 7, padding=math.floor(7/2))
         att = conv(att)
 
         att = att.permute(0, 2, 1)
