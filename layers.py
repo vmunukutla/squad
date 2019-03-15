@@ -194,7 +194,7 @@ class EmbeddingEncoder(nn.Module):
         # print('start')
         prev_out = input
         # print(prev_out.shape)
-        prev_out = self.pos_encoder(prev_out)
+        # prev_out = self.pos_encoder(prev_out)
         # print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
