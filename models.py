@@ -45,7 +45,7 @@ class BiDAF(nn.Module):
         #                              num_layers=1,
         #                              drop_prob=drop_prob)
 
-        self.emb_encoder = layers.EmbeddingEncoder()
+        self.emb_encoder = layers.EmbeddingEncoder(device=device)
 
         self.att = layers.BiDAFAttention(hidden_size=96,
                                          drop_prob=drop_prob)

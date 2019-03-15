@@ -109,13 +109,14 @@ class HighwayEncoder(nn.Module):
 
 # borrowed from https://towardsdatascience.com/how-to-code-the-transformer-in-pytorch-24db27c8f9ec
 class PositionalEncoder(nn.Module):
-    def __init__(self, d_model, max_seq_len = 400):
+    def __init__(self, d_model, max_seq_len = 400, device=None):
         super().__init__()
         self.d_model = d_model
+        self.device = device
 
         # create constant 'pe' matrix with values dependant on
         # pos and i
-        pe = torch.zeros(max_seq_len, d_model)
+        pe = torch.zeros(max_seq_len, d_model).to(device)
         for pos in range(max_seq_len):
             for i in range(0, d_model, 2):
                 pe[pos, i] = \
@@ -134,7 +135,7 @@ class PositionalEncoder(nn.Module):
         seq_len = x.size(1)
         #add back .cuda() if necessary
         x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
-        requires_grad=False)
+        requires_grad=False).to(self.device)
         return x
 
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
@@ -178,25 +179,24 @@ class FeedForwardNeuralNetModel(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2, device=None):
         super(EmbeddingEncoder, self).__init__()
         self.d_model = d_model
         self.kernel_size = kernel_size
         self.num_layers = num_layers
+        self.device = device
         self.conv_layers = [PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)]
         self.attention = MultiHeadAttention(d_model=d_model)
         self.layer_norm = [nn.LayerNorm(d_model) for i in range(num_layers+2)]
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
-        self.pos_encoder = PositionalEncoder(d_model=d_model)
+        self.pos_encoder = PositionalEncoder(d_model=d_model, device=device)
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
         # print('start')
         prev_out = input
-        print(prev_out.dtype)
         # print(prev_out.shape)
         prev_out = self.pos_encoder(prev_out)
-        print(prev_out.dtype)
         # print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
