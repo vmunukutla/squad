@@ -107,6 +107,36 @@ class HighwayEncoder(nn.Module):
 
         return x
 
+# borrowed from https://towardsdatascience.com/how-to-code-the-transformer-in-pytorch-24db27c8f9ec
+class PositionalEncoder(nn.Module):
+    def __init__(self, d_model, max_seq_len = 400):
+        super().__init__()
+        self.d_model = d_model
+
+        # create constant 'pe' matrix with values dependant on
+        # pos and i
+        pe = torch.zeros(max_seq_len, d_model)
+        for pos in range(max_seq_len):
+            for i in range(0, d_model, 2):
+                pe[pos, i] = \
+                math.sin(pos / (10000 ** ((2 * i)/d_model)))
+                pe[pos, i + 1] = \
+                math.cos(pos / (10000 ** ((2 * (i + 1))/d_model)))
+
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+
+    def forward(self, x):
+        # make embeddings relatively larger
+        x = x * math.sqrt(self.d_model)
+        #add constant to embedding
+        seq_len = x.size(1)
+        #add back .cuda() if necessary
+        x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
+        requires_grad=False)
+        return x
+
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
 class FeedForwardNeuralNetModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -157,9 +187,14 @@ class EmbeddingEncoder(nn.Module):
         self.attention = MultiHeadAttention(d_model=d_model)
         self.layer_norm = [nn.LayerNorm(d_model) for i in range(num_layers+2)]
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
+        self.pos_encoder = PositionalEncoder(d_model=d_model)
 
     def forward(self, input, mask):
+        print('start')
         prev_out = input
+        print(prev_out.shape)
+        prev_out = self.pos_encoder(prev_out)
+        print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
             layer_out = self.layer_norm[i](prev_out)
@@ -222,8 +257,8 @@ class MultiHeadAttention(nn.Module):
         self.drop_prob = drop_prob
         self.num_heads = num_heads
         self.d_model = d_model
-        self.d_k = int(d_model/num_heads)
-        self.d_v = int(d_model/num_heads)
+        self.d_k = d_model
+        self.d_v = d_model
         W_Q = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
         W_K = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
         W_V = [nn.Parameter(torch.zeros(d_model, self.d_v)) for i in range(num_heads)]
