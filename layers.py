@@ -178,23 +178,24 @@ class FeedForwardNeuralNetModel(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, kernel_size=1, d_model=96, num_layers=4):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2):
         super(EmbeddingEncoder, self).__init__()
         self.d_model = d_model
         self.kernel_size = kernel_size
         self.num_layers = num_layers
-        self.conv_layers = [PointwiseCNN(d_model, d_model, 1) for i in range(num_layers)]
+        self.conv_layers = [PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)]
         self.attention = MultiHeadAttention(d_model=d_model)
         self.layer_norm = [nn.LayerNorm(d_model) for i in range(num_layers+2)]
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
         self.pos_encoder = PositionalEncoder(d_model=d_model)
+        self.drop_prob = drop_prob
 
     def forward(self, input, mask):
-        print('start')
+        # print('start')
         prev_out = input
-        print(prev_out.shape)
+        # print(prev_out.shape)
         prev_out = self.pos_encoder(prev_out)
-        print(prev_out.shape)
+        # print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
             layer_out = self.layer_norm[i](prev_out)
@@ -206,11 +207,13 @@ class EmbeddingEncoder(nn.Module):
             conv_out = conv_out.permute(0, 2, 1)
             #print(conv_out.shape)
             concat_out = conv_out + prev_out
+            concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
             #print(concat_out.shape)
             prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers](prev_out)
         attention_out = self.attention(layer_out, mask)
         concat_out = prev_out + attention_out
+        concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         prev_out = concat_out
         # print('look here')
         # print(concat_out.shape)
@@ -219,7 +222,10 @@ class EmbeddingEncoder(nn.Module):
         feed_out = self.feed_forward(layer_out)
         #print(feed_out.shape)
         concat_out = concat_out + feed_out
+        concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         #print(concat_out.shape)
+        # print('here')
+        # print(concat_out.shape)
         return concat_out
 
 
@@ -239,10 +245,10 @@ class ScaledDotProductAttention(nn.Module):
         attn = attn / self.temperature
 
         if mask is not None:
-            print('mask off')
-            print(attn.shape)
+            # print('mask off')
+            # print(attn.shape)
             mask = mask.view(mask.size(0), mask.size(1), 1)
-            print(mask.shape)
+            # print(mask.shape)
             attn = attn.masked_fill(mask, -np.inf)
 
         attn = self.softmax(attn)
@@ -469,8 +475,12 @@ class BiDAFAttention(nn.Module):
             Equation 1 in https://arxiv.org/abs/1611.01603
         """
         c_len, q_len = c.size(1), q.size(1)
+        # print('similarity')
+        # print(c.shape)
+        # print(q.shape)
         c = F.dropout(c, self.drop_prob, self.training)  # (bs, c_len, hid_size)
         q = F.dropout(q, self.drop_prob, self.training)  # (bs, q_len, hid_size)
+        # print(c.shape)
 
         # Shapes: (batch_size, c_len, q_len)
         s0 = torch.matmul(c, self.c_weight).expand([-1, -1, q_len])
@@ -480,6 +490,57 @@ class BiDAFAttention(nn.Module):
         s = s0 + s1 + s2 + self.bias
 
         return s
+
+class ModelEncoder(nn.Module):
+
+    def __init__(self, kernel_size=7, d_model=96, num_layers=2, num_blocks=7):
+        super(ModelEncoder, self).__init__()
+        self.block = num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers)]
+
+    def forward(self, input, mask):
+        result = input
+        for i in range(len(self.block)):
+            result = self.block[i](result, mask)
+        M1 = result
+        result = M1
+        for i in range(len(self.block)):
+            result = self.block[i](result, mask)
+        M2 = result
+        result = M2
+        for i in range(len(self.block)):
+            result = self.block[i](result, mask)
+        M3 = result
+        return M1, M2, M3
+
+class QANet(nn.Module):
+
+    def __init__(self, hidden_size=96):
+        super(QANet, self).__init__()
+        self.layer_one = nn.Linear(hidden_size, 1)
+        self.layer_two = nn.Linear(hidden_size, 1)
+
+    def forward(self, M1, M2, M3, mask):
+        first = torch.cat((M1, M2), dim=1) # (64, c_len+q_len, 96)
+        second = torch.cat((M1, M3), dim=1)# (64, c_len+q_len, 96)
+
+        # print('in hereeeeeee')
+        # print(first.shape)
+        # print(second.shape)
+
+        logits_1 = self.layer_one(first)
+        logits_2 = self.layer_two(second)
+
+        # print(logits_1.shape)
+        # print(logits_2.shape)
+        # print(mask.shape)
+        mask = torch.cat((mask, mask), dim=1)
+        # print(mask.shape)
+
+        log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
+        log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
+
+        return log_p1, log_p2
+
 
 
 class BiDAFOutput(nn.Module):

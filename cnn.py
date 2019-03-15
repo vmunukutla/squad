@@ -9,6 +9,7 @@ CS224N 2018-19: Homework 5
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 # class CNN(torch.nn.Module):
@@ -48,7 +49,7 @@ class PointwiseCNN(nn.Module):
 
     def __init__(self, e_word, e_char, kernel_size=1):
         super(PointwiseCNN, self).__init__()
-        self.conv_layer = nn.Conv1d(e_char, e_word, kernel_size)
+        self.conv_layer = nn.Conv1d(e_char, e_word, kernel_size, padding=math.floor(kernel_size/2))
 
     def forward(self, x_reshaped):
         x_conv = self.conv_layer(x_reshaped)
