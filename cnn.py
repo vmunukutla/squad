@@ -43,3 +43,13 @@ class CNN(nn.Module):
         x_conv = self.conv_layer(x_reshaped)
         x_conv_out = torch.max(F.relu(x_conv), 2)[0]
         return x_conv_out
+
+class PointwiseCNN(nn.Module):
+
+    def __init__(self, e_word, e_char, kernel_size=1):
+        super(PointwiseCNN, self).__init__()
+        self.conv_layer = nn.Conv1d(e_char, e_word, kernel_size)
+
+    def forward(self, x_reshaped):
+        x_conv = self.conv_layer(x_reshaped)
+        return x_conv

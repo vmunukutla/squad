@@ -33,7 +33,7 @@ class BiDAF(nn.Module):
         super(BiDAF, self).__init__()
         self.emb = layers.Embedding(word_vectors=word_vectors,
                                     char_vectors=char_vectors,
-                                    hidden_size=hidden_size,
+                                    hidden_size=96,
                                     drop_prob=drop_prob)
 
         self.enc = layers.RNNEncoder(input_size=hidden_size,
@@ -41,13 +41,15 @@ class BiDAF(nn.Module):
                                      num_layers=1,
                                      drop_prob=drop_prob)
 
+        self.emb_encoder = layers.EmbeddingEncoder()
+
         self.att = layers.BiDAFAttention(hidden_size=2 * hidden_size,
                                          drop_prob=drop_prob)
 
-        self.mod = layers.RNNEncoder(input_size=8 * hidden_size,
-                                     hidden_size=hidden_size,
-                                     num_layers=2,
-                                     drop_prob=drop_prob)
+        # self.mod = layers.RNNEncoder(input_size=8 * hidden_size,
+        #                              hidden_size=hidden_size,
+        #                              num_layers=2,
+        #                              drop_prob=drop_prob)
 
         self.out = layers.BiDAFOutput(hidden_size=hidden_size,
                                       drop_prob=drop_prob)
@@ -57,11 +59,14 @@ class BiDAF(nn.Module):
         q_mask = torch.zeros_like(qw_idxs) != qw_idxs
         c_len, q_len = c_mask.sum(-1), q_mask.sum(-1)
 
-        #print('c_mask: ', c_mask.shape)
+        print('c_mask: ', c_mask.shape)
 
 
         c_emb = self.emb(cw_idxs, cc_idxs)         # (batch_size, c_len, hidden_size)
         q_emb = self.emb(qw_idxs, qc_idxs)         # (batch_size, q_len, hidden_size)
+
+        c_emb_out = self.emb_encoder(c_emb, c_mask)
+        q_emb_out = self.emb_encoder(q_emb, q_mask)
         # print('c_emb: ', c_emb.shape)
         # print('q_emb: ', q_emb.shape)
 

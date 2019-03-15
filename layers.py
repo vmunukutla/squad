@@ -7,10 +7,12 @@ Author:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from util import masked_softmax
-from cnn import CNN
+from cnn import CNN, PointwiseCNN
+import numpy as np
 
 
 class Embedding(nn.Module):
@@ -36,23 +38,31 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
-        input_shape = y.shape
-        input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2]))
-        x_padded = self.char_embed(input_reshaped)
-        x_reshaped = x_padded.permute(0, 2, 1)
-        x_conv_out = self.cnn.forward(x_reshaped)
+        input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
+        input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
+        #print(input_reshaped.shape)
+        x_padded = self.char_embed(input_reshaped) # 64-dimensional
+        x_reshaped = x_padded.permute(0, 2, 1) # (64*seq_len, 64, 16)
+        #print(x_reshaped.shape)
+        #print('hello')
+        x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
+        #print(x_conv_out.shape)
 
         x_highway = self.highway(x_conv_out)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
+        #print(x_word_emb.shape)
+
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
-        word_emb = self.proj(word_emb)  # (batch_size, seq_len, 2 * hidden_size)
-        word_emb = self.hwy(word_emb)   # (batch_size, seq_len, 2 * hidden_size)
+        #print('first shape')
+        word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
+        word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
+        #print(word_emb.shape)
 
-        return word_emb
+        return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
 
 class Highway(nn.Module):
 
@@ -97,37 +107,6 @@ class HighwayEncoder(nn.Module):
 
         return x
 
-
-class EmbeddingEncoder(nn.Module):
-
-    def __init__(self, seq_len, hidden_size, kernel_size=7, num_filters=128, num_layers=4):
-        super(EmbeddingEncoder, self).__init__()
-        self.num_layers = num_layers
-        self.conv_layers = [nn.Conv1d(embed_size, num_filters, kernel_size) for i in range(num_layers))]
-        self.attention = MultiHeadAttention(d_model=num_filters)
-        normalized_shapes = [[seq_len, 2 * hidden_size], num_layers * [seq_len, num_filters], []]
-        self.layer_norm = [nn.LayerNorm(normalized_shapes[i]) for i in range(num_layers)+2]
-        self.layer_norm_after = [nn.LayerNorm(normalized_shapes[i])]
-        self.feed_forward = FeedForwardNeuralNetModel(num_filters, num_filters/2, num_filters)
-
-    def forward(self, input, input_mask):
-        prev_out = input
-        for i in range(self.num_layers):
-            layer_out = self.layer_norm[i](input)
-            conv_out = self.conv_layers[i](layer_out)
-            concat_out = torch.cat(prev_out, conv_out)
-            prev_out = concat_out
-        layer_out = self.layer_norm[self.num_layers](prev_out)
-        attention_out = self.attention(layer_out)
-        concat_out = torch.cat(prev_output, attention_out)
-        prev_out = concat_out
-        layer_out = self.layer_norm[self.num_layers+1](prev_out)
-        feed_out = self.feed_forward(layer_out)
-        concat_out = torch.concat(concat_out, feed_out)
-        return concat_out
-
-
-
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
 class FeedForwardNeuralNetModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -153,6 +132,61 @@ class FeedForwardNeuralNetModel(nn.Module):
         out = self.fc2(out)
         return out
 
+# 1. Got embedding of shape (batch_size, sq_len, embed_size * 2) -> (64, sq_len, 600)
+
+# (batch_size, sq_len, 128)
+# 2. First layernorm is of shape [sq_len, embed_size * 2]
+# 3. First conv maps [batch_size, sq_len, embed_size * 2] -> [batch_size, sq_len, hidden_size] (permute to do this)
+# 4. add original with conv result's second dimension, shape -> [batch_size, sq_len, d_model + 600] -> [64, sq_len, d_model + 600]
+# 5. Repeat. But if I do this, how is the final dimension d = 128 for the output if I keep concatenating?
+# 6. What exactly is PointWise convolution? Also, my CNN currently takes the max, so it completely erases the last dimension
+# 7. CQ Attention Layer is the same as the BiDAFAttention class
+# 8. what does it mean to share weights in the 4th step?
+# 9. what do the arrows mean?
+
+
+
+class EmbeddingEncoder(nn.Module):
+
+    def __init__(self, kernel_size=1, d_model=96, num_layers=4):
+        super(EmbeddingEncoder, self).__init__()
+        self.d_model = d_model
+        self.kernel_size = kernel_size
+        self.num_layers = num_layers
+        self.conv_layers = [PointwiseCNN(d_model, d_model, 1) for i in range(num_layers)]
+        self.attention = MultiHeadAttention(d_model=d_model)
+        self.layer_norm = [nn.LayerNorm(d_model) for i in range(num_layers+2)]
+        self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
+
+    def forward(self, input, mask):
+        prev_out = input
+        for i in range(self.num_layers):
+            #print(prev_out.shape)
+            layer_out = self.layer_norm[i](prev_out)
+            layer_out = layer_out.permute(0, 2, 1)
+            # print('layer shape')
+            # print(layer_out.shape)
+            conv_out = self.conv_layers[i].forward(layer_out)
+            #print(conv_out.shape)
+            conv_out = conv_out.permute(0, 2, 1)
+            #print(conv_out.shape)
+            concat_out = conv_out + prev_out
+            #print(concat_out.shape)
+            prev_out = concat_out
+        layer_out = self.layer_norm[self.num_layers](prev_out)
+        attention_out = self.attention(layer_out, mask)
+        concat_out = prev_out + attention_out
+        prev_out = concat_out
+        # print('look here')
+        # print(concat_out.shape)
+        layer_out = self.layer_norm[self.num_layers+1](prev_out)
+        #print(layer_out.shape)
+        feed_out = self.feed_forward(layer_out)
+        #print(feed_out.shape)
+        concat_out = concat_out + feed_out
+        #print(concat_out.shape)
+        return concat_out
+
 
 # borrowed from https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Modules.py
 class ScaledDotProductAttention(nn.Module):
@@ -170,6 +204,10 @@ class ScaledDotProductAttention(nn.Module):
         attn = attn / self.temperature
 
         if mask is not None:
+            print('mask off')
+            print(attn.shape)
+            mask = mask.view(mask.size(0), mask.size(1), 1)
+            print(mask.shape)
             attn = attn.masked_fill(mask, -np.inf)
 
         attn = self.softmax(attn)
@@ -179,17 +217,17 @@ class ScaledDotProductAttention(nn.Module):
         return output, attn
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, num_heads=8, d_model=128, drop_prob=0.1):
+    def __init__(self, num_heads=4, d_model=128, drop_prob=0.1):
         super(MultiHeadAttention, self).__init__()
         self.drop_prob = drop_prob
         self.num_heads = num_heads
         self.d_model = d_model
-        self.d_k = d_model/num_heads
-        self.d_v = d_model/num_heads
-        W_Q = [nn.Parameter(torch.zeros(d_model, d_k)) for i in range(num_heads)]
-        W_K = [nn.Parameter(torch.zeros(d_model, d_k)) for i in range(num_heads)]
-        W_V = [nn.Parameter(torch.zeros(d_model, d_v)) for i in range(num_heads)]
-        self.W_O = nn.Parameter(torch.zeros(num_heads * d_v, d_model))
+        self.d_k = int(d_model/num_heads)
+        self.d_v = int(d_model/num_heads)
+        W_Q = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
+        W_K = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
+        W_V = [nn.Parameter(torch.zeros(d_model, self.d_v)) for i in range(num_heads)]
+        self.W_O = nn.Parameter(torch.zeros(num_heads * self.d_v, d_model))
         nn.init.xavier_uniform_(self.W_O)
         for i in range(num_heads):
             for weight in (W_Q[i], W_K[i], W_V[i]):
@@ -197,21 +235,20 @@ class MultiHeadAttention(nn.Module):
         self.W_Q = nn.ParameterList(W_Q)
         self.W_K = nn.ParameterList(W_K)
         self.W_V = nn.ParameterList(W_V)
-        self.attention_layer = ScaledDotProductAttention(temperature = 1/math.sqrt(d_k))
+        self.attention_layer = ScaledDotProductAttention(temperature = 1/math.sqrt(self.d_k))
 
     def forward(self, input, input_mask):
         Q, K, V = [], [], []
         heads = []
         for i in range(self.num_heads):
-            Q.append(torch.matmul(input, self.W_Q))
-            K.append(torch.matmul(input, self.W_K))
-            V.append(torch.matmul(input, self.W_V))
-        for i in range(num_heads):
-            heads.append(self.attention_layer(Q[i], K[i], V[i]))
-        concatenated = torch.concat(heads, dim=2)
+            Q.append(torch.matmul(input, self.W_Q[i]))
+            K.append(torch.matmul(input, self.W_K[i]))
+            V.append(torch.matmul(input, self.W_V[i]))
+        for i in range(self.num_heads):
+            heads.append(self.attention_layer(Q[i], K[i], V[i], input_mask)[0])
+        concatenated = torch.cat(heads, dim=2)
         output = torch.matmul(concatenated, self.W_O)
-        return output.transpose(1, 2)
-
+        return output
 
 
 class RNNEncoder(nn.Module):
@@ -261,86 +298,86 @@ class RNNEncoder(nn.Module):
         return x
 
 
-class DCN (nn.Module):
-    def __init__(self, hidden_size, drop_prob=0.1):
-        super(BiDAFAttention, self).__init__()
-        self.drop_prob = drop_prob
-        self.c_weight = nn.Parameter(torch.zeros(hidden_size, 1))
-        self.q_weight = nn.Parameter(torch.zeros(hidden_size, 1))
-        self.cq_weight = nn.Parameter(torch.zeros(1, 1, hidden_size))
-        for weight in (self.c_weight, self.q_weight, self.cq_weight):
-            nn.init.xavier_uniform_(weight)
-        self.bias = nn.Parameter(torch.zeros(1))
-
-
-    """
-    Here we will attempt to impliment a DCN model. Amanda and I are still a
-    little confused about what that means, but hopefully it works out.
-    """
-    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio=0.1):
-        super(CoattentionModel, self).__init__()
-        self.hidden_dim = hidden_dim
-
-        self.encoder = RNNEncoder(2*hidden_dim, hidden_dim, 1, dropout_ratio)
-
-        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
-        self.decoder = DynamicDecoder(hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
-        self.dropout = nn.Dropout(p=dropout_ratio)
-
-    def forward(self, q_seq, q_mask, d_seq, d_mask, span=None):
-        Q = self.encoder(q_seq, q_mask) # b x n + 1 x l
-        D = self.encoder(d_seq, d_mask)  # B x m + 1 x l
-
-        #project q
-        Q = F.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
-
-        #co attention
-        D_t = torch.transpose(D, 1, 2) #B x l x m + 1
-        L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
-
-        A_Q_ = F.softmax(L, dim=1) # B x n + 1 x m + 1
-        A_Q = torch.transpose(A_Q_, 1, 2) # B x m + 1 x n + 1
-        C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
-
-        Q_t = torch.transpose(Q, 1, 2)  # B x l x n + 1
-        A_D = F.softmax(L, dim=2)  # B x n + 1 x m + 1
-        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B x l x n+1 ; B x l x n+1) x (B x n +1x m+1) => B x 2l x m + 1
-
-        C_D_t = torch.transpose(C_D, 1, 2)  # B x m + 1 x 2l
-
-        #fusion BiLSTM
-        bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
-        bilstm_in = self.dropout(bilstm_in)
-        #?? should it be d_lens + 1 and get U[:-1]
-        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
-
-        loss, idx_s, idx_e = self.decoder(U, d_mask, span)
-        if span is not None:
-            return loss, idx_s, idx_e
-        else:
-            return idx_s, idx_e
-
-class FusionBiLSTM(nn.Module):
-    def __init__(self, hidden_dim, dropout_ratio):
-        super(FusionBiLSTM, self).__init__()
-        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
-                                     bidirectional=True, dropout=dropout_ratio)
-        init_lstm_forget_bias(self.fusion_bilstm)
-        self.dropout = nn.Dropout(p=dropout_ratio)
-
-    def forward(self, seq, mask):
-        lens = torch.sum(mask, 1)
-        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
-        _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
-        seq_ = torch.index_select(seq, 0, lens_argsort)
-        packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
-        output, _ = self.fusion_bilstm(packed)
-        e, _ = pad_packed_sequence(output, batch_first=True)
-        e = e.contiguous()
-        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
-        e = self.dropout(e)
-        return e
+# class DCN (nn.Module):
+#     def __init__(self, hidden_size, drop_prob=0.1):
+#         super(BiDAFAttention, self).__init__()
+#         self.drop_prob = drop_prob
+#         self.c_weight = nn.Parameter(torch.zeros(hidden_size, 1))
+#         self.q_weight = nn.Parameter(torch.zeros(hidden_size, 1))
+#         self.cq_weight = nn.Parameter(torch.zeros(1, 1, hidden_size))
+#         for weight in (self.c_weight, self.q_weight, self.cq_weight):
+#             nn.init.xavier_uniform_(weight)
+#         self.bias = nn.Parameter(torch.zeros(1))
+#
+#
+#     """
+#     Here we will attempt to impliment a DCN model. Amanda and I are still a
+#     little confused about what that means, but hopefully it works out.
+#     """
+#     def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio=0.1):
+#         super(CoattentionModel, self).__init__()
+#         self.hidden_dim = hidden_dim
+#
+#         self.encoder = RNNEncoder(2*hidden_dim, hidden_dim, 1, dropout_ratio)
+#
+#         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+#         self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
+#         self.decoder = DynamicDecoder(hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
+#         self.dropout = nn.Dropout(p=dropout_ratio)
+#
+#     def forward(self, q_seq, q_mask, d_seq, d_mask, span=None):
+#         Q = self.encoder(q_seq, q_mask) # b x n + 1 x l
+#         D = self.encoder(d_seq, d_mask)  # B x m + 1 x l
+#
+#         #project q
+#         Q = F.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
+#
+#         #co attention
+#         D_t = torch.transpose(D, 1, 2) #B x l x m + 1
+#         L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
+#
+#         A_Q_ = F.softmax(L, dim=1) # B x n + 1 x m + 1
+#         A_Q = torch.transpose(A_Q_, 1, 2) # B x m + 1 x n + 1
+#         C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
+#
+#         Q_t = torch.transpose(Q, 1, 2)  # B x l x n + 1
+#         A_D = F.softmax(L, dim=2)  # B x n + 1 x m + 1
+#         C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B x l x n+1 ; B x l x n+1) x (B x n +1x m+1) => B x 2l x m + 1
+#
+#         C_D_t = torch.transpose(C_D, 1, 2)  # B x m + 1 x 2l
+#
+#         #fusion BiLSTM
+#         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
+#         bilstm_in = self.dropout(bilstm_in)
+#         #?? should it be d_lens + 1 and get U[:-1]
+#         U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
+#
+#         loss, idx_s, idx_e = self.decoder(U, d_mask, span)
+#         if span is not None:
+#             return loss, idx_s, idx_e
+#         else:
+#             return idx_s, idx_e
+#
+# class FusionBiLSTM(nn.Module):
+#     def __init__(self, hidden_dim, dropout_ratio):
+#         super(FusionBiLSTM, self).__init__()
+#         self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
+#                                      bidirectional=True, dropout=dropout_ratio)
+#         init_lstm_forget_bias(self.fusion_bilstm)
+#         self.dropout = nn.Dropout(p=dropout_ratio)
+#
+#     def forward(self, seq, mask):
+#         lens = torch.sum(mask, 1)
+#         lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+#         _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+#         seq_ = torch.index_select(seq, 0, lens_argsort)
+#         packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
+#         output, _ = self.fusion_bilstm(packed)
+#         e, _ = pad_packed_sequence(output, batch_first=True)
+#         e = e.contiguous()
+#         e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+#         e = self.dropout(e)
+#         return e
 
 class BiDAFAttention(nn.Module):
     """Bidirectional attention originally used by BiDAF.
