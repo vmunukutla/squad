@@ -274,7 +274,7 @@ class MultiHeadAttention(nn.Module):
         W_Q = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
         W_K = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
         W_V = [nn.Parameter(torch.zeros(d_model, self.d_v)) for i in range(num_heads)]
-        self.W_O = nn.Module(nn.Parameter(torch.zeros(num_heads * self.d_v, d_model)))
+        self.W_O = nn.Parameter(torch.zeros(num_heads * self.d_v, d_model))
         nn.init.xavier_uniform_(self.W_O)
         for i in range(num_heads):
             for weight in (W_Q[i], W_K[i], W_V[i]):
