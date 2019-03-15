@@ -30,10 +30,11 @@ class BiDAF(nn.Module):
         hidden_size (int): Number of features in the hidden state at each layer.
         drop_prob (float): Dropout probability.
     """
-    def __init__(self, word_vectors, char_vectors, hidden_size, drop_prob=0.2):
+    def __init__(self, word_vectors, char_vectors, hidden_size, drop_prob=0.2, device=None):
         super(BiDAF, self).__init__()
         hidden_size = 96
         self.hidden_size = hidden_size
+        self.device = device
         self.emb = layers.Embedding(word_vectors=word_vectors,
                                     char_vectors=char_vectors,
                                     hidden_size=96,
@@ -54,7 +55,7 @@ class BiDAF(nn.Module):
         #                              num_layers=2,
         #                              drop_prob=drop_prob)
 
-        self.model_encoder = layers.ModelEncoder(d_model=hidden_size, drop_prob=drop_prob)
+        self.model_encoder = layers.ModelEncoder(d_model=hidden_size, drop_prob=drop_prob, device=device)
 
         # self.out = layers.BiDAFOutput(hidden_size=hidden_size,
         #                               drop_prob=drop_prob)
@@ -70,11 +71,11 @@ class BiDAF(nn.Module):
         # print('c_mask: ', c_mask.shape)
 
 
-        c_emb = self.emb(cw_idxs, cc_idxs)         # (batch_size, c_len, hidden_size)
-        q_emb = self.emb(qw_idxs, qc_idxs)         # (batch_size, q_len, hidden_size)
+        c_emb = self.emb(cw_idxs, cc_idxs).to(self.device)       # (batch_size, c_len, hidden_size)
+        q_emb = self.emb(qw_idxs, qc_idxs).to(self.device)         # (batch_size, q_len, hidden_size)
 
-        c_emb_out = self.emb_encoder(c_emb, c_mask)
-        q_emb_out = self.emb_encoder(q_emb, q_mask)
+        c_emb_out = self.emb_encoder(c_emb, c_mask).to(self.device)
+        q_emb_out = self.emb_encoder(q_emb, q_mask).to(self.device)
         # print('c_emb_out: ', c_emb.shape)
         # print('q_emb_out: ', q_emb.shape)
 
