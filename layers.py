@@ -136,6 +136,7 @@ class PositionalEncoder(nn.Module):
         #add back .cuda() if necessary
         x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
         requires_grad=False).to(self.device)
+        print(x.dtype)
         return x
 
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
@@ -196,8 +197,9 @@ class EmbeddingEncoder(nn.Module):
         # print('start')
         prev_out = input
         # print(prev_out.shape)
-        prev_out = self.pos_encoder(prev_out)
+        # prev_out = self.pos_encoder(prev_out)
         # print(prev_out.shape)
+        print(prev_out.dtype)
         for i in range(self.num_layers):
             #print(prev_out.shape)
             layer_out = self.layer_norm[i](prev_out)
