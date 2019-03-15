@@ -193,8 +193,10 @@ class EmbeddingEncoder(nn.Module):
     def forward(self, input, mask):
         # print('start')
         prev_out = input
+        print(prev_out.dtype)
         # print(prev_out.shape)
         prev_out = self.pos_encoder(prev_out)
+        print(prev_out.dtype)
         # print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
