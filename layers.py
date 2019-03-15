@@ -115,7 +115,8 @@ class PositionalEncoder(nn.Module):
 
         # create constant 'pe' matrix with values dependant on
         # pos and i
-        pe = torch.zeros(max_seq_len, d_model)
+        cpu0 = torch.device('cpu:0')
+        pe = torch.zeros(max_seq_len, d_model, device=cpu0)
         for pos in range(max_seq_len):
             for i in range(0, d_model, 2):
                 pe[pos, i] = \
