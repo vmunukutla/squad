@@ -258,9 +258,6 @@ class ScaledDotProductAttention(nn.Module):
         attn = self.softmax(attn)
         attn = self.dropout(attn)
         output = torch.bmm(attn, v)
-
-        print(output.shape)
-
         return output, attn
 
 class MultiHeadAttention(nn.Module):
