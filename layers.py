@@ -136,7 +136,6 @@ class PositionalEncoder(nn.Module):
         #add back .cuda() if necessary
         x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
         requires_grad=False).to(self.device)
-        print(x.dtype)
         return x
 
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
