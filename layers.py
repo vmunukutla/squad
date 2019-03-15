@@ -198,7 +198,7 @@ class EmbeddingEncoder(nn.Module):
         # print(prev_out.shape)
         for i in range(self.num_layers):
             #print(prev_out.shape)
-            layer_out = nn.LayerNorm(d_model)(prev_out)
+            layer_out = nn.LayerNorm(self.d_model)(prev_out)
             # layer_out = self.layer_norm[i](prev_out)
             layer_out = layer_out.permute(0, 2, 1)
             # print('layer shape')
