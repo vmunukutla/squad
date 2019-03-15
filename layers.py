@@ -493,9 +493,9 @@ class BiDAFAttention(nn.Module):
 
 class ModelEncoder(nn.Module):
 
-    def __init__(self, kernel_size=7, d_model=96, num_layers=2, num_blocks=7):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=2, num_blocks=7, drop_prob=0.2):
         super(ModelEncoder, self).__init__()
-        self.block = num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers)]
+        self.block = num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers, drop_prob=drop_prob)]
 
     def forward(self, input, mask):
         result = input
