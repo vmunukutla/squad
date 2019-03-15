@@ -87,7 +87,7 @@ class BiDAF(nn.Module):
                        c_mask, q_mask)    # (batch_size, c_len, 4 * hidden_size)
 
         att = att.permute(0, 2, 1).to(self.device)
-        att = conv(att)
+        att = self.conv_layer(att)
 
         att = att.permute(0, 2, 1)
 
