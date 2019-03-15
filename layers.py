@@ -134,7 +134,7 @@ class PositionalEncoder(nn.Module):
         seq_len = x.size(1)
         #add back .cuda() if necessary
         x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
-        requires_grad=False).cuda()
+        requires_grad=False)
         return x
 
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
