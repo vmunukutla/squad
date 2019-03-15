@@ -186,9 +186,9 @@ class EmbeddingEncoder(nn.Module):
         self.kernel_size = kernel_size
         self.num_layers = num_layers
         self.device = device
-        self.conv_layers = nn.ParameterList([PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)])
+        self.conv_layers = [PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)]
         self.attention = MultiHeadAttention(d_model=d_model)
-        self.layer_norm = nn.ParamaterList([nn.LayerNorm(d_model) for i in range(num_layers+2)])
+        self.layer_norm = [nn.LayerNorm(d_model) for i in range(num_layers+2)]
         self.test_norm = nn.LayerNorm(self.d_model)
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
         self.pos_encoder = PositionalEncoder(d_model=d_model, device=device)
