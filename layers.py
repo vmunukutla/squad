@@ -38,10 +38,10 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
-        # print('x')
-        # print(x)
-        # print('y')
-        # print(y)
+        print('x')
+        print(x)
+        print('y')
+        print(y)
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
         #print(input_reshaped.shape)
