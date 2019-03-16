@@ -381,6 +381,8 @@ def masked_softmax(logits, mask, dim=-1, log_softmax=False):
     """
     mask = mask.type(torch.float32)
     masked_logits = mask * logits + (1 - mask) * -1e30
+    print('masked_softmax')
+    print(masked_logits)
     softmax_fn = F.log_softmax if log_softmax else F.softmax
     probs = softmax_fn(masked_logits, dim)
 
