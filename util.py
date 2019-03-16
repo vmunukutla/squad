@@ -382,6 +382,7 @@ def masked_softmax(logits, mask, dim=-1, log_softmax=False):
     mask = mask.type(torch.float32)
     print('mask')
     print(mask)
+    print(mask * logits)
     masked_logits = mask * logits + (1 - mask) * -1e30
     print('masked_softmax')
     print(masked_logits)
