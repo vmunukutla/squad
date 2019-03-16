@@ -485,15 +485,16 @@ class ModelEncoder(nn.Module):
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
         M1 = result
-        result = M1
-        for i in range(len(self.block)):
-            result = self.block[i](result, mask)
-        M2 = result
-        result = M2
-        for i in range(len(self.block)):
-            result = self.block[i](result, mask)
-        M3 = result
-        return M1, M2, M3
+        # result = M1
+        # for i in range(len(self.block)):
+        #     result = self.block[i](result, mask)
+        # M2 = result
+        # result = M2
+        # for i in range(len(self.block)):
+        #     result = self.block[i](result, mask)
+        # M3 = result
+        # return M1, M2, M3
+        return M1, M1, M1
 
 class QANet(nn.Module):
 
