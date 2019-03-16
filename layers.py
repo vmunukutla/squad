@@ -541,6 +541,7 @@ class QANet(nn.Module):
         # print(mask.shape)
         # mask1 = torch.cat((mask, mask), dim=1)
         # print(mask.shape)
+        print('logits')
 
         print(logits_1)
         print(logits_2)
