@@ -526,6 +526,11 @@ class QANet(nn.Module):
         # print(first.shape)
         # print(second.shape)
 
+        print('in forward')
+
+        print(first)
+        print(second)
+
         logits_1 = self.layer_one(first)
         logits_2 = self.layer_two(second)
 
@@ -537,8 +542,15 @@ class QANet(nn.Module):
         # mask1 = torch.cat((mask, mask), dim=1)
         # print(mask.shape)
 
+        print(logits_1)
+        print(logits_2)
+
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
+
+        print('log loss')
+        print(log_p1)
+        print(log_p2)
 
         return log_p1, log_p2
 
