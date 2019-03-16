@@ -100,16 +100,21 @@ class BiDAF(nn.Module):
 
         att = self.att(c_enc, q_enc,
                        c_mask, q_mask)    # (batch_size, c_len, 4 * hidden_size)
-        #
-        print('att')
-        print(att)
         print(att.shape)
         att = att.permute(0, 2, 1)
         att = self.conv_layer(att)
 
         att = att.permute(0, 2, 1)
 
+        print('att')
+        print(att)
         M1, M2, M3 = self.model_encoder(att, c_mask)
+        print('M1')
+        print(M1)
+        print('M2')
+        print(M2)
+        print('M3')
+        print(M3)
 
         # mod = self.mod(att, c_len)        # (batch_size, c_len, 2 * hidden_size)
 
