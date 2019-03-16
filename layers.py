@@ -38,38 +38,21 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
-        print('x')
-        print(x)
-        print('y')
-        print(y)
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
-        #print(input_reshaped.shape)
         x_padded = self.char_embed(input_reshaped) # 64-dimensional
         x_reshaped = x_padded.permute(0, 2, 1) # (64*seq_len, 64, 16)
-        #print(x_reshaped.shape)
-        #print('hello')
         x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
-        # print(x_conv_out)
-        #print(x_conv_out.shape)
 
         x_highway = self.highway(x_conv_out)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
-        # print(x_word_emb)
-
-        #print(x_word_emb.shape)
-
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
-        # print(word_emb)
-        #print('first shape')
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
-        # print(word_emb)
-        #print(word_emb.shape)
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
 
@@ -118,14 +101,13 @@ class HighwayEncoder(nn.Module):
 
 # borrowed from https://towardsdatascience.com/how-to-code-the-transformer-in-pytorch-24db27c8f9ec
 class PositionalEncoder(nn.Module):
-    def __init__(self, d_model, max_seq_len = 400, device=None):
+    def __init__(self, d_model, max_seq_len = 400):
         super().__init__()
         self.d_model = d_model
-        self.device = device
 
         # create constant 'pe' matrix with values dependant on
         # pos and i
-        pe = torch.zeros(max_seq_len, d_model).to(device)
+        pe = torch.zeros(max_seq_len, d_model)
         for pos in range(max_seq_len):
             for i in range(0, d_model, 2):
                 pe[pos, i] = \
@@ -144,7 +126,7 @@ class PositionalEncoder(nn.Module):
         seq_len = x.size(1)
         #add back .cuda() if necessary
         x = x + torch.autograd.Variable(self.pe[:,:seq_len], \
-        requires_grad=False).to(self.device)
+        requires_grad=False)
         return x
 
 #https://www.deeplearningwizard.com/deep_learning/practical_pytorch/pytorch_feedforward_neuralnetwork/
@@ -189,23 +171,20 @@ class FeedForwardNeuralNetModel(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2, device=None):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2):
         super(EmbeddingEncoder, self).__init__()
         self.d_model = d_model
         self.kernel_size = kernel_size
         self.num_layers = num_layers
-        self.device = device
         self.conv_layers = nn.ModuleList([PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)])
         self.attention = MultiHeadAttention(heads=4,d_model=d_model)
         self.layer_norm = nn.ModuleList([nn.LayerNorm(d_model) for i in range(num_layers+2)])
         self.test_norm = nn.LayerNorm(self.d_model)
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
-        self.pos_encoder = PositionalEncoder(d_model=d_model, device=device)
+        self.pos_encoder = PositionalEncoder(d_model=d_model)
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
-        # print('EmbeddingEncoder')
-        # print(input)
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
         for i in range(self.num_layers):
@@ -225,8 +204,6 @@ class EmbeddingEncoder(nn.Module):
         feed_out = self.feed_forward(layer_out)
         concat_out = concat_out + feed_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
-        # print('embedding end')
-        # print(concat_out)
         return concat_out
 
 
@@ -237,8 +214,6 @@ def attention(q, k, v, d_k, mask=None, dropout=None):
         mask = mask.unsqueeze(1) # (batch_size, 1, context_len
         mask = mask.unsqueeze(1)
         scores = scores.masked_fill(mask == 0, -1e9)
-        # print('mask size')
-        # print(mask.shape)
     scores = F.softmax(scores, dim=-1)
 
     if dropout is not None:
@@ -489,7 +464,7 @@ class BiDAFAttention(nn.Module):
 
 class ModelEncoder(nn.Module):
 
-    def __init__(self, kernel_size=7, d_model=96, num_layers=2, num_blocks=7, drop_prob=0.2, device=None):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=2, num_blocks=7, drop_prob=0.2):
         super(ModelEncoder, self).__init__()
         self.block = nn.ModuleList(num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers, drop_prob=drop_prob)])
 
