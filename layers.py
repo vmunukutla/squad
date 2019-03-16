@@ -38,10 +38,10 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
-        print('x')
-        print(x)
-        print('y')
-        print(y)
+        # print('x')
+        # print(x)
+        # print('y')
+        # print(y)
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
         #print(input_reshaped.shape)
@@ -50,25 +50,25 @@ class Embedding(nn.Module):
         #print(x_reshaped.shape)
         #print('hello')
         x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
-        print(x_conv_out)
+        # print(x_conv_out)
         #print(x_conv_out.shape)
 
         x_highway = self.highway(x_conv_out)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
-        print(x_word_emb)
+        # print(x_word_emb)
 
         #print(x_word_emb.shape)
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
-        print(word_emb)
+        # print(word_emb)
         #print('first shape')
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
-        print(word_emb)
+        # print(word_emb)
         #print(word_emb.shape)
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
@@ -204,8 +204,8 @@ class EmbeddingEncoder(nn.Module):
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
-        print('EmbeddingEncoder')
-        print(input)
+        # print('EmbeddingEncoder')
+        # print(input)
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
         for i in range(self.num_layers):
@@ -237,8 +237,8 @@ def attention(q, k, v, d_k, mask=None, dropout=None):
         mask = mask.unsqueeze(1) # (batch_size, 1, context_len
         mask = mask.unsqueeze(1)
         scores = scores.masked_fill(mask == 0, -1e9)
-        print('mask size')
-        print(mask.shape)
+        # print('mask size')
+        # print(mask.shape)
     scores = F.softmax(scores, dim=-1)
 
     if dropout is not None:
