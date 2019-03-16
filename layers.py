@@ -38,6 +38,10 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
+        print('x')
+        print(x)
+        print('y')
+        print(y)
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
         #print(input_reshaped.shape)
@@ -46,20 +50,25 @@ class Embedding(nn.Module):
         #print(x_reshaped.shape)
         #print('hello')
         x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
+        print(x_conv_out)
         #print(x_conv_out.shape)
 
         x_highway = self.highway(x_conv_out)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
+        print(x_word_emb)
+
         #print(x_word_emb.shape)
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
+        print(word_emb)
         #print('first shape')
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
+        print(word_emb)
         #print(word_emb.shape)
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
@@ -161,6 +170,7 @@ class FeedForwardNeuralNetModel(nn.Module):
 
         # Linear function (readout)  # LINEAR
         out = self.fc2(out)
+        #print('feed forward')
         return out
 
 # 1. Got embedding of shape (batch_size, sq_len, embed_size * 2) -> (64, sq_len, 600)
@@ -186,7 +196,7 @@ class EmbeddingEncoder(nn.Module):
         self.num_layers = num_layers
         self.device = device
         self.conv_layers = nn.ModuleList([PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)])
-        self.attention = MultiHeadAttention(d_model=d_model)
+        self.attention = MultiHeadAttention(heads=4,d_model=d_model)
         self.layer_norm = nn.ModuleList([nn.LayerNorm(d_model) for i in range(num_layers+2)])
         self.test_norm = nn.LayerNorm(self.d_model)
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
@@ -194,108 +204,89 @@ class EmbeddingEncoder(nn.Module):
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
-        # print('start')
+        print('EmbeddingEncoder')
+        print(input)
         prev_out = input
-        # print(prev_out.shape)
         prev_out = self.pos_encoder(prev_out)
-        # print(prev_out.shape)
-        # print(prev_out.dtype)
         for i in range(self.num_layers):
-            #print(prev_out.shape)
             layer_out = self.layer_norm[i](prev_out)
             layer_out = layer_out.permute(0, 2, 1)
-            # print('layer shape')
-            # print(layer_out.shape)
             conv_out = self.conv_layers[i].forward(layer_out)
-            #print(conv_out.shape)
             conv_out = conv_out.permute(0, 2, 1)
-            #print(conv_out.shape)
             concat_out = conv_out + prev_out
             concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
-            #print(concat_out.shape)
             prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers](prev_out)
-        attention_out = self.attention(layer_out, mask)
+        attention_out = self.attention(layer_out, layer_out, layer_out, mask)
         concat_out = prev_out + attention_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         prev_out = concat_out
-        # print('look here')
-        # print(concat_out.shape)
         layer_out = self.layer_norm[self.num_layers+1](prev_out)
-        #print(layer_out.shape)
         feed_out = self.feed_forward(layer_out)
-        #print(feed_out.shape)
         concat_out = concat_out + feed_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
-        #print(concat_out.shape)
-        # print('here')
-        # print(concat_out.shape)
+        # print('embedding end')
+        # print(concat_out)
         return concat_out
 
 
-# borrowed from https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Modules.py
-class ScaledDotProductAttention(nn.Module):
-    ''' Scaled Dot-Product Attention '''
+def attention(q, k, v, d_k, mask=None, dropout=None):
 
-    def __init__(self, temperature, attn_dropout=0.1):
+    scores = torch.matmul(q, k.transpose(-2, -1)) /  math.sqrt(d_k)
+    if mask is not None:
+        mask = mask.unsqueeze(1) # (batch_size, 1, context_len
+        mask = mask.unsqueeze(1)
+        scores = scores.masked_fill(mask == 0, -1e9)
+        print('mask size')
+        print(mask.shape)
+    scores = F.softmax(scores, dim=-1)
+
+    if dropout is not None:
+        scores = dropout(scores)
+
+    output = torch.matmul(scores, v)
+    return output
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, heads, d_model, dropout = 0.1):
         super().__init__()
-        self.temperature = temperature
-        self.dropout = nn.Dropout(attn_dropout)
-        self.softmax = nn.Softmax(dim=2)
+
+        self.d_model = d_model
+        self.d_k = d_model // heads
+        self.h = heads
+
+        self.q_linear = nn.Linear(d_model, d_model)
+        self.v_linear = nn.Linear(d_model, d_model)
+        self.k_linear = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.out = nn.Linear(d_model, d_model)
 
     def forward(self, q, k, v, mask=None):
 
-        attn = torch.bmm(q, k.transpose(1, 2))
-        attn = attn / self.temperature
+        bs = q.size(0)
 
-        if mask is not None:
-            # print('mask off')
-            # print(attn.shape)
-            mask = mask.view(mask.size(0), mask.size(1), 1)
-            # print(mask.shape)
-            attn = attn.masked_fill(mask, -np.inf)
+        # perform linear operation and split into h heads
 
-        attn = self.softmax(attn)
-        attn = self.dropout(attn)
-        output = torch.bmm(attn, v)
-        return output, attn
+        k = self.k_linear(k).view(bs, -1, self.h, self.d_k)
+        q = self.q_linear(q).view(bs, -1, self.h, self.d_k)
+        v = self.v_linear(v).view(bs, -1, self.h, self.d_k)
 
-class MultiHeadAttention(nn.Module):
-    def __init__(self, num_heads=4, d_model=128, drop_prob=0.1):
-        super(MultiHeadAttention, self).__init__()
-        self.drop_prob = drop_prob
-        self.num_heads = num_heads
-        self.d_model = d_model
-        self.d_k = d_model
-        self.d_v = d_model
-        W_Q = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
-        W_K = [nn.Parameter(torch.zeros(d_model, self.d_k)) for i in range(num_heads)]
-        W_V = [nn.Parameter(torch.zeros(d_model, self.d_v)) for i in range(num_heads)]
-        self.W_O = nn.Parameter(torch.zeros(num_heads * self.d_v, d_model))
-        nn.init.xavier_uniform_(self.W_O)
-        for i in range(num_heads):
-            for weight in (W_Q[i], W_K[i], W_V[i]):
-                nn.init.xavier_uniform_(weight)
-        self.W_Q = nn.ParameterList(W_Q)
-        self.W_K = nn.ParameterList(W_K)
-        self.W_V = nn.ParameterList(W_V)
-        self.attention_layer = ScaledDotProductAttention(temperature = 1/math.sqrt(self.d_k))
+        # transpose to get dimensions bs * h * sl * d_model
 
-    def forward(self, input, input_mask):
-        Q, K, V = [], [], []
-        heads = []
-        for i in range(self.num_heads):
-            Q = (torch.matmul(input, self.W_Q[i]))
-            K = (torch.matmul(input, self.W_K[i]))
-            V = (torch.matmul(input, self.W_V[i]))
-            heads.append(self.attention_layer(Q, K, V, input_mask)[0])
-            # heads.append(torch.Tensor(input.size(0), input.size(1), input.size(2)).cuda())
-        # for i in range(self.num_heads):
-        #     heads.append(self.attention_layer(Q[i], K[i], V[i], input_mask)[0])
-        concatenated = torch.cat(heads, dim=2)
-        output = torch.matmul(concatenated, self.W_O)
+        k = k.transpose(1,2)
+        q = q.transpose(1,2)
+        v = v.transpose(1,2)
+# calculate attention using function we will define next
+        scores = attention(q, k, v, self.d_k, mask, self.dropout)
+
+        # concatenate heads and put through final linear layer
+        concat = scores.transpose(1,2).contiguous()\
+        .view(bs, -1, self.d_model)
+
+        output = self.out(concat)
+
         return output
-
 
 class RNNEncoder(nn.Module):
     """General-purpose layer for encoding a sequence using a bidirectional RNN.
@@ -521,12 +512,15 @@ class QANet(nn.Module):
 
     def __init__(self, hidden_size=96):
         super(QANet, self).__init__()
-        self.layer_one = nn.Linear(hidden_size, 1)
-        self.layer_two = nn.Linear(hidden_size, 1)
+        self.layer_one = nn.Linear(2 * hidden_size, 1)
+        self.layer_two = nn.Linear(2 * hidden_size, 1)
 
     def forward(self, M1, M2, M3, mask):
-        first = torch.cat((M1, M2), dim=1) # (64, c_len+q_len, 96)
-        second = torch.cat((M1, M3), dim=1)# (64, c_len+q_len, 96)
+        # print('QANet test')
+        # print(M1.shape)
+        # print(M2.shape)
+        first = torch.cat((M1, M2), dim=2) # (64, c_len+q_len, 96)
+        second = torch.cat((M1, M3), dim=2)# (64, c_len+q_len, 96)
 
         # print('in hereeeeeee')
         # print(first.shape)
@@ -535,10 +529,12 @@ class QANet(nn.Module):
         logits_1 = self.layer_one(first)
         logits_2 = self.layer_two(second)
 
+        # print('logits shape')
         # print(logits_1.shape)
         # print(logits_2.shape)
         # print(mask.shape)
-        mask = torch.cat((mask, mask), dim=1)
+        # print(mask.shape)
+        # mask1 = torch.cat((mask, mask), dim=1)
         # print(mask.shape)
 
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
