@@ -508,8 +508,12 @@ class QANet(nn.Module):
         logits_1 = self.layer_one(first)
         logits_2 = self.layer_two(second)
 
-        logits_1 = logits_1 + 10**(-9)
-        logits_2 = logits_2 + 10**(-9)
+        # logits_1 = logits_1 + 10**(-9)
+        # logits_2 = logits_2 + 10**(-9)
+        print("logits1")
+        print(logits_1)
+        print('logits2')
+        print(logits_2)
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
 
