@@ -494,6 +494,8 @@ class ModelEncoder(nn.Module):
         self.block = nn.ModuleList(num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers, drop_prob=drop_prob)])
 
     def forward(self, input, mask):
+        print('ModelEncoder')
+        print(input)
         result = input
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
