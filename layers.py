@@ -185,8 +185,6 @@ class EmbeddingEncoder(nn.Module):
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
-        print ("embedding encoder input")
-        print(input)
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
         for i in range(self.num_layers):
