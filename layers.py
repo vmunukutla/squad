@@ -40,19 +40,31 @@ class Embedding(nn.Module):
     def forward(self, x, y):
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
+        print('input_reshaped')
+        print(input_reshaped)
         x_padded = self.char_embed(input_reshaped) # 64-dimensional
+        print('x_padded')
+        print(x_padded)
         x_reshaped = x_padded.permute(0, 2, 1) # (64*seq_len, 64, 16)
         x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
+        print('x_conv_out')
+        print(x_conv_out)
 
         x_highway = self.highway(x_conv_out)
+        print('x_highway')
+        print(x_highway)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
+        print('word_emb')
+        print(word_emb)
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
+        print('word_emb2')
+        print(word_emb)
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
 
