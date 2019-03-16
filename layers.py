@@ -38,8 +38,6 @@ class Embedding(nn.Module):
         self.hwy = HighwayEncoder(2, hidden_size)
 
     def forward(self, x, y):
-        # print(x)
-        # print(y)
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
         x_padded = self.char_embed(input_reshaped) # 64-dimensional
@@ -173,7 +171,7 @@ class FeedForwardNeuralNetModel(nn.Module):
 
 class EmbeddingEncoder(nn.Module):
 
-    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.2):
+    def __init__(self, kernel_size=7, d_model=96, num_layers=4, drop_prob=0.1):
         super(EmbeddingEncoder, self).__init__()
         self.d_model = d_model
         self.kernel_size = kernel_size
@@ -181,12 +179,14 @@ class EmbeddingEncoder(nn.Module):
         self.conv_layers = nn.ModuleList([PointwiseCNN(d_model, d_model, kernel_size) for i in range(num_layers)])
         self.attention = MultiHeadAttention(heads=4,d_model=d_model)
         self.layer_norm = nn.ModuleList([nn.LayerNorm(d_model) for i in range(num_layers+2)])
-        self.test_norm = nn.LayerNorm(self.d_model)
+        self.test_norm = nn.LayerNorm(d_model)
         self.feed_forward = FeedForwardNeuralNetModel(d_model, int(d_model/2), d_model)
         self.pos_encoder = PositionalEncoder(d_model=d_model)
         self.drop_prob = drop_prob
 
     def forward(self, input, mask):
+        print ("embedding encoder input")
+        print(input)
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
         for i in range(self.num_layers):
@@ -471,8 +471,6 @@ class ModelEncoder(nn.Module):
         self.block = nn.ModuleList(num_blocks * [EmbeddingEncoder(d_model=d_model, num_layers=num_layers, drop_prob=drop_prob)])
 
     def forward(self, input, mask):
-        print('ModelEncoder')
-        print(input)
         result = input
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
@@ -495,35 +493,10 @@ class QANet(nn.Module):
         self.layer_two = nn.Linear(2 * hidden_size, 1)
 
     def forward(self, M1, M2, M3, mask):
-        # print('QANet test')
-        # print(M1.shape)
-        # print(M2.shape)
         first = torch.cat((M1, M2), dim=2) # (64, c_len+q_len, 96)
         second = torch.cat((M1, M3), dim=2)# (64, c_len+q_len, 96)
-
-        # print('in hereeeeeee')
-        # print(first.shape)
-        # print(second.shape)
-
-        print('in forward')
-
-        print(first)
-        print(second)
-
         logits_1 = self.layer_one(first)
         logits_2 = self.layer_two(second)
-
-        # print('logits shape')
-        # print(logits_1.shape)
-        # print(logits_2.shape)
-        # print(mask.shape)
-        # print(mask.shape)
-        # mask1 = torch.cat((mask, mask), dim=1)
-        # print(mask.shape)
-        print('logits')
-
-        print(logits_1)
-        print(logits_2)
 
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
