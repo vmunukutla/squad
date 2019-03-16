@@ -69,7 +69,14 @@ class BiDAF(nn.Module):
 
         # print('c_mask: ', c_mask.shape)
 
-
+        print('cw_idxs')
+        print(cw_idxs)
+        print('qw_idxs')
+        print(qw_idxs)
+        print('cc_idxs')
+        print(cc_idxs)
+        print('qc_idxs')
+        print(qc_idxs)
         c_emb = self.emb(cw_idxs, cc_idxs)      # (batch_size, c_len, hidden_size)
         q_emb = self.emb(qw_idxs, qc_idxs)        # (batch_size, q_len, hidden_size)
         print('c_emb')
