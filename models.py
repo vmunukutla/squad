@@ -109,12 +109,12 @@ class BiDAF(nn.Module):
         print('att')
         print(att)
         M1, M2, M3 = self.model_encoder(att, c_mask)
-        print('M1')
-        print(M1)
-        print('M2')
-        print(M2)
-        print('M3')
-        print(M3)
+        # print('M1')
+        # print(M1)
+        # print('M2')
+        # print(M2)
+        # print('M3')
+        # print(M3)
 
         # mod = self.mod(att, c_len)        # (batch_size, c_len, 2 * hidden_size)
 

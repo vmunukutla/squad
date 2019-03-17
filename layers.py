@@ -199,6 +199,8 @@ class EmbeddingEncoder(nn.Module):
     def forward(self, input, mask):
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
+        print('prev_out')
+        print(prev_out)
         for i in range(self.num_layers):
             layer_out = self.layer_norm[i](prev_out)
             layer_out = layer_out.permute(0, 2, 1)
@@ -209,11 +211,15 @@ class EmbeddingEncoder(nn.Module):
             prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers](prev_out)
         attention_out = self.attention(layer_out, layer_out, layer_out, mask)
+        print('attention_out')
+        print(attention_out)
         concat_out = prev_out + attention_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers+1](prev_out)
         feed_out = self.feed_forward(layer_out)
+        print('feed_out')
+        print(feed_out)
         concat_out = concat_out + feed_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         return concat_out
@@ -485,15 +491,17 @@ class ModelEncoder(nn.Module):
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
         M1 = result
-        # result = M1
-        # for i in range(len(self.block)):
-        #     result = self.block[i](result, mask)
-        # M2 = result
-        # result = M2
-        # for i in range(len(self.block)):
-        #     result = self.block[i](result, mask)
-        # M3 = result
-        # return M1, M2, M3
+        result = M1
+        print('M2')
+        for i in range(len(self.block)):
+            result = self.block[i](result, mask)
+        M2 = result
+        result = M2
+        print('M3')
+        for i in range(len(self.block)):
+            result = self.block[i](result, mask)
+        M3 = result
+        return M1, M2, M3
         return M1, M1, M1
 
 class QANet(nn.Module):
