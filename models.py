@@ -37,17 +37,17 @@ class BiDAF(nn.Module):
                                     hidden_size=hidden_size,
                                     drop_prob=drop_prob)
 
-        self.enc = layers.RNNEncoder(input_size=hidden_size,
-                                     hidden_size=hidden_size,
-                                     num_layers=1,
-                                     drop_prob=drop_prob)
+        # self.enc = layers.RNNEncoder(input_size=hidden_size,
+        #                              hidden_size=hidden_size,
+        #                              num_layers=1,
+        #                              drop_prob=drop_prob)
 
-        # self.emb_encoder = layers.EmbeddingEncoder(drop_prob=drop_prob)
+        self.emb_encoder = layers.EmbeddingEncoder(d_model=hidden_size, drop_prob=drop_prob)
 
-        self.att = layers.BiDAFAttention(hidden_size=2*hidden_size,
+        self.att = layers.BiDAFAttention(hidden_size=hidden_size,
                                          drop_prob=drop_prob)
 
-        self.mod = layers.RNNEncoder(input_size=8 * hidden_size,
+        self.mod = layers.RNNEncoder(input_size=4 * hidden_size,
                                      hidden_size=hidden_size,
                                      num_layers=2,
                                      drop_prob=drop_prob)
@@ -85,8 +85,8 @@ class BiDAF(nn.Module):
         # print(q_emb)
         # print(q_emb.shape)
 
-        # c_enc = self.emb_encoder(c_emb, c_mask) # (batch_size, c_len, hidden_size)
-        # q_enc = self.emb_encoder(q_emb, q_mask) # (batch_size, c_len, hidden_size)
+        c_enc = self.emb_encoder(c_emb, c_mask) # (batch_size, c_len, hidden_size)
+        q_enc = self.emb_encoder(q_emb, q_mask) # (batch_size, c_len, hidden_size)
         # print('c_enc')
         # print(c_enc)
         # print(c_enc.shape)
@@ -94,8 +94,8 @@ class BiDAF(nn.Module):
         # print(q_enc)
         # print(q_enc.shape)
 
-        c_enc = self.enc(c_emb, c_len)    # (batch_size, c_len, 2 * hidden_size)
-        q_enc = self.enc(q_emb, q_len)    # (batch_size, q_len, 2 * hidden_size)
+        # c_enc = self.enc(c_emb, c_len)    # (batch_size, c_len, 2 * hidden_size)
+        # q_enc = self.enc(q_emb, q_len)    # (batch_size, q_len, 2 * hidden_size)
 
         att = self.att(c_enc, q_enc,
                        c_mask, q_mask)    # (batch_size, c_len, 4 * hidden_size)
