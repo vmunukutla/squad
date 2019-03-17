@@ -198,7 +198,7 @@ class EmbeddingEncoder(nn.Module):
 
     def forward(self, input, mask):
         prev_out = input
-        prev_out = self.pos_encoder(prev_out)
+        # prev_out = self.pos_encoder(prev_out)
         # print('prev_out')
         # print(prev_out)
         for i in range(self.num_layers):
