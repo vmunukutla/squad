@@ -33,7 +33,7 @@ class Embedding(nn.Module):
         self.word_embed = nn.Embedding.from_pretrained(word_vectors)
         self.char_embed = nn.Embedding.from_pretrained(char_vectors, freeze=False)
         self.cnn = CNN(word_vectors.size(1), char_vectors.size(1))
-        self.highway = HighwayEncoder(2, word_vectors.size(1))
+        self.highway = Highway(word_vectors.size(1))
         self.proj = nn.Linear(word_vectors.size(1) * 2, hidden_size, bias=False)
         self.hwy = HighwayEncoder(2, hidden_size)
 
@@ -68,19 +68,19 @@ class Embedding(nn.Module):
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
 
-# class Highway(nn.Module):
-#
-#     def __init__(self, embed_size):
-#         super(Highway, self).__init__()
-#
-#         self.projection = nn.Linear(embed_size, embed_size)
-#         self.gate = nn.Linear(embed_size, embed_size)
-#
-#     def forward(self, x):
-#         x_proj = F.relu(self.projection(x))
-#         x_gate = F.sigmoid(self.gate(x))
-#         x_highway = torch.mul(x_proj, x_gate) + torch.mul(torch.add(1, torch.mul(x_gate, -1)), x)
-#         return x_highway
+class Highway(nn.Module):
+
+    def __init__(self, embed_size):
+        super(Highway, self).__init__()
+
+        self.projection = nn.Linear(embed_size, embed_size)
+        self.gate = nn.Linear(embed_size, embed_size)
+
+    def forward(self, x):
+        x_proj = F.relu(self.projection(x))
+        x_gate = F.sigmoid(self.gate(x))
+        x_highway = torch.mul(x_proj, x_gate) + torch.mul(torch.add(1, torch.mul(x_gate, -1)), x)
+        return x_highway
 
 
 class HighwayEncoder(nn.Module):
