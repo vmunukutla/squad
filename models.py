@@ -100,7 +100,7 @@ class BiDAF(nn.Module):
 
         att = self.att(c_enc, q_enc,
                        c_mask, q_mask)    # (batch_size, c_len, 4 * hidden_size)
-        print(att.shape)
+        #print(att.shape)
         att = att.permute(0, 2, 1)
         att = self.conv_layer(att)
 
