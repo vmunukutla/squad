@@ -380,13 +380,13 @@ def masked_softmax(logits, mask, dim=-1, log_softmax=False):
         probs (torch.Tensor): Result of taking masked softmax over the logits.
     """
     mask = mask.type(torch.float32)
-    print('mask')
-    print(mask)
-    print('multiply')
-    print(mask * logits)
+    # print('mask')
+    # print(mask)
+    # print('multiply')
+    # print(mask * logits)
     masked_logits = mask * logits + (1 - mask) * -1e30
-    print('masked_softmax')
-    print(masked_logits)
+    # print('masked_softmax')
+    # print(masked_logits)
     softmax_fn = F.log_softmax if log_softmax else F.softmax
     probs = softmax_fn(masked_logits, dim)
 

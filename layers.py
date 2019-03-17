@@ -40,31 +40,31 @@ class Embedding(nn.Module):
     def forward(self, x, y):
         input_shape = y.shape # (batch_size, seq_len, 16) = (64, seq_len, 16)
         input_reshaped = torch.reshape(y, (input_shape[0] * input_shape[1], input_shape[2])) # (64*seq_len, 16)
-        print('input_reshaped')
-        print(input_reshaped)
+        # print('input_reshaped')
+        # print(input_reshaped)
         x_padded = self.char_embed(input_reshaped) # 64-dimensional
-        print('x_padded')
-        print(x_padded)
+        # print('x_padded')
+        # print(x_padded)
         x_reshaped = x_padded.permute(0, 2, 1) # (64*seq_len, 64, 16)
         x_conv_out = self.cnn.forward(x_reshaped) # (64*seq_len, 300)
-        print('x_conv_out')
-        print(x_conv_out)
+        # print('x_conv_out')
+        # print(x_conv_out)
 
         x_highway = self.highway(x_conv_out)
-        print('x_highway')
-        print(x_highway)
+        # print('x_highway')
+        # print(x_highway)
         x_highway_reshaped = torch.reshape(x_highway, (input_shape[0], input_shape[1], x_highway.shape[1]))
         x_word_emb = F.dropout(x_highway_reshaped, self.drop_prob, self.training)
 
         word_emb = self.word_embed(x)   # (batch_size, seq_len, embed_size)
         word_emb = F.dropout(word_emb, self.drop_prob, self.training)
         word_emb = torch.cat((word_emb, x_word_emb), dim=2)
-        print('word_emb')
-        print(word_emb)
+        # print('word_emb')
+        # print(word_emb)
         word_emb = self.proj(word_emb)  # (batch_size, seq_len, hidden_size)
         word_emb = self.hwy(word_emb)   # (batch_size, seq_len, hidden_size)
-        print('word_emb2')
-        print(word_emb)
+        # print('word_emb2')
+        # print(word_emb)
 
         return word_emb # (batch_size, seq_len, 2 * embed_size) = (64, seq_len, 100)
 
@@ -199,8 +199,8 @@ class EmbeddingEncoder(nn.Module):
     def forward(self, input, mask):
         prev_out = input
         prev_out = self.pos_encoder(prev_out)
-        print('prev_out')
-        print(prev_out)
+        # print('prev_out')
+        # print(prev_out)
         for i in range(self.num_layers):
             layer_out = self.layer_norm[i](prev_out)
             layer_out = layer_out.permute(0, 2, 1)
@@ -211,15 +211,15 @@ class EmbeddingEncoder(nn.Module):
             prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers](prev_out)
         attention_out = self.attention(layer_out, layer_out, layer_out, mask)
-        print('attention_out')
-        print(attention_out)
+        # print('attention_out')
+        # print(attention_out)
         concat_out = prev_out + attention_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         prev_out = concat_out
         layer_out = self.layer_norm[self.num_layers+1](prev_out)
         feed_out = self.feed_forward(layer_out)
-        print('feed_out')
-        print(feed_out)
+        # print('feed_out')
+        # print(feed_out)
         concat_out = concat_out + feed_out
         concat_out = F.dropout(concat_out, p=self.drop_prob, training=self.training)
         return concat_out
@@ -492,12 +492,12 @@ class ModelEncoder(nn.Module):
             result = self.block[i](result, mask)
         M1 = result
         result = M1
-        print('M2')
+        # print('M2')
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
         M2 = result
         result = M2
-        print('M3')
+        # print('M3')
         for i in range(len(self.block)):
             result = self.block[i](result, mask)
         M3 = result
@@ -519,16 +519,16 @@ class QANet(nn.Module):
 
         # logits_1 = logits_1 + 10**(-9)
         # logits_2 = logits_2 + 10**(-9)
-        print("logits1")
-        print(logits_1)
-        print('logits2')
-        print(logits_2)
+        # print("logits1")
+        # print(logits_1)
+        # print('logits2')
+        # print(logits_2)
         log_p1 = masked_softmax(logits_1.squeeze(), mask, log_softmax=True)
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
-
-        print('log loss')
-        print(log_p1)
-        print(log_p2)
+        #
+        # print('log loss')
+        # print(log_p1)
+        # print(log_p2)
 
         return log_p1, log_p2
 
